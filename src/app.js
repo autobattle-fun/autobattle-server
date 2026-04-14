@@ -31,6 +31,7 @@ export function createApp() {
   app.use(attachAuthContext);
 
   app.use(apiRoutes);
+  app.use("/api", apiRoutes);
 
   app.use(notFoundMiddleware);
   app.use(errorHandlerMiddleware);

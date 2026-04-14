@@ -11,7 +11,10 @@ export async function attachAuthContext(request, _response, next) {
     sessionToken: request.cookies?.[env.SESSION_COOKIE_NAME] || null,
   };
 
-  if (request.path?.startsWith("/auth/")) {
+  if (
+    request.path?.startsWith("/auth/") ||
+    request.path?.startsWith("/api/auth/")
+  ) {
     return next();
   }
 

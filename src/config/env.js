@@ -1,11 +1,13 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import { z } from "zod";
+
+dotenv.config({ override: true });
 
 const envSchema = z.object({
   NODE_ENV: z
     .enum(["development", "test", "production"])
     .default("development"),
-  PORT: z.coerce.number().default(4000),
+  PORT: z.coerce.number().default(8080),
   CLIENT_ORIGIN: z.string().url().default("http://localhost:3000"),
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   REDIS_URL: z.string().min(1, "REDIS_URL is required"),
