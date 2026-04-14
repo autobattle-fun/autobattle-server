@@ -1,0 +1,61 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String       @id @default(cuid())
+  privyUserId   String       @unique
+  username      String       @unique
+  authProvider  String       @default("privy")
+  walletAddress String?
+  email         String?
+  status        String       @default("active")
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  lastLoginAt   DateTime?
+  predictions   Prediction[]
+}
+
+model Market {
+  id             String          @id @default(cuid())
+  slug           String          @unique
+  title          String
+  description    String?
+  status         MarketStatus    @default(OPEN)
+  closesAt       DateTime
+  resolvesAt     DateTime?
+  winningOutcome PredictionSide?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  predictions    Prediction[]
+}
+
+model Prediction {
+  id        String         @id @default(cuid())
+  userId    String
+  marketId  String
+  side      PredictionSide
+  amount    Decimal        @db.Decimal(20, 8)
+  createdAt DateTime       @default(now())
+  market    Market         @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([marketId])
+  @@index([userId])
+}
+
+enum MarketStatus {
+  OPEN
+  RESOLVED
+  CANCELED
+}
+
+enum PredictionSide {
+  YES
+  NO
+}
