@@ -10,8 +10,8 @@ import { prisma } from "../db/prisma.js";
 
 // Optional: Put your $AUTO token mint address in your .env
 // For testing, we can default to a placeholder if it's missing
-const AUTO_MINT_ADDRESS = process.env.AUTO_MINT_ADDRESS
-  ? new PublicKey(process.env.AUTO_MINT_ADDRESS)
+const AUTO_MINT_ADDRESS = process.env.AUTO_TOKEN_ADDRESS
+  ? new PublicKey(process.env.AUTO_TOKEN_ADDRESS)
   : solanaService.crankKeypair.publicKey; // Warning: Use actual mint in prod!
 
 // Helpers for PDA derivation
