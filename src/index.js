@@ -4,6 +4,7 @@ import { env } from "./config/env.js";
 import { logger } from "./lib/logger.js";
 import { prisma } from "./db/prisma.js";
 import { redis } from "./db/redis.js";
+import { startCrankEngine, stopCrankEngine } from "./lib/crank.js";
 
 async function start(workerId) {
   try {
@@ -34,10 +35,16 @@ async function start(workerId) {
       port: env.PORT,
       env: env.NODE_ENV,
     });
+
+    // Start crank engine on worker 1 only to avoid duplicates
+    if (workerId === 1) {
+      startCrankEngine();
+    }
   });
 
   const shutdown = async () => {
     logger.info("Shutting down API server", { workerId });
+    stopCrankEngine();
     server.close(async () => {
       await prisma.$disconnect();
       process.exit(0);

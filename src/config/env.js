@@ -40,6 +40,22 @@ const envSchema = z.object({
       return normalized;
     }),
   API_WORKERS: z.coerce.number().int().positive().default(1),
+
+  // ── Solana & Web3 ──
+  SOLANA_RPC_URL: z.string().url().default("https://api.devnet.solana.com"),
+  CRANK_PRIVATE_KEY: z.string().min(1, "CRANK_PRIVATE_KEY is required"),
+  AUTO_MINT_ADDRESS: z.string().min(32).optional(),
+  SWITCHBOARD_PROGRAM_ID: z
+    .string()
+    .default("Aio4gaXjXzJNVLtzwtNVmSqGKpANtXhybbkhtAC94ji2"),
+
+  // ── Crank Engine ──
+  CRANK_INTERVAL_MS: z.coerce.number().int().positive().default(10_000),
+  CRANK_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => value === true || value === "true")
+    .default(false),
 });
 
 const parsed = envSchema.safeParse(process.env);
