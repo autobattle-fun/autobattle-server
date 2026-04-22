@@ -10,5 +10,6 @@ export const apiRoutes = Router();
 apiRoutes.use(healthRoutes);
 apiRoutes.use("/auth", authRoutes);
 apiRoutes.use(userRoutes);
+apiRoutes.use("/test", testRoutes);
 apiRoutes.use("/games", gameRoutes);
 apiRoutes.use("/markets", marketRoutes);
