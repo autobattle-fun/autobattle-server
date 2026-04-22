@@ -11,12 +11,9 @@ const predMarketIdl = JSON.parse(
 );
 
 // Contract Addresses
-export const GAME_ENGINE_PROGRAM_ID = new PublicKey(
-  gameEngineIdl.metadata.address,
-);
-export const PRED_MARKET_PROGRAM_ID = new PublicKey(
-  predMarketIdl.metadata.address,
-);
+export const GAME_ENGINE_PROGRAM_ID = new PublicKey(gameEngineIdl.address);
+
+export const PRED_MARKET_PROGRAM_ID = new PublicKey(predMarketIdl.address);
 
 class SolanaService {
   constructor() {
@@ -40,16 +37,8 @@ class SolanaService {
     anchor.setProvider(this.provider);
 
     // 4. Initialize Programs
-    this.gameEngine = new anchor.Program(
-      gameEngineIdl,
-      GAME_ENGINE_PROGRAM_ID,
-      this.provider,
-    );
-    this.predMarket = new anchor.Program(
-      predMarketIdl,
-      PRED_MARKET_PROGRAM_ID,
-      this.provider,
-    );
+    this.gameEngine = new anchor.Program(gameEngineIdl, this.provider);
+    this.predMarket = new anchor.Program(predMarketIdl, this.provider);
 
     console.log(
       `✅ Solana Service Initialized. Crank Wallet: ${this.crankKeypair.publicKey.toBase58()}`,
