@@ -9,4 +9,4 @@ export const apiRoutes = Router();
 apiRoutes.use(healthRoutes);
 apiRoutes.use("/auth", authRoutes);
 apiRoutes.use(userRoutes);
-apiRoutes.use(testRoutes);
+apiRoutes.use("/test", testRoutes);
