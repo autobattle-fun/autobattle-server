@@ -1,0 +1,1113 @@
+{
+  "address": "GxLT8QMUw6cVT6HQBu2c2zepbQnhUWr4VPEB2vfggE2e",
+  "metadata": {
+    "name": "game_engine",
+    "version": "0.1.0",
+    "spec": "0.1.0"
+  },
+  "instructions": [
+    {
+      "name": "fulfill_vrf",
+      "discriminator": [
+        2,
+        152,
+        127,
+        138,
+        81,
+        199,
+        73,
+        21
+      ],
+      "accounts": [
+        {
+          "name": "game_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "game_state.game_id",
+                "account": "GameState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vrf_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  114,
+                  102,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "game_state.game_id",
+                "account": "GameState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "randomness_account"
+        },
+        {
+          "name": "crank",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "init_game",
+      "discriminator": [
+        251,
+        46,
+        12,
+        208,
+        184,
+        148,
+        157,
+        73
+      ],
+      "accounts": [
+        {
+          "name": "registry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "game_state",
+          "writable": true
+        },
+        {
+          "name": "crank",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "agent_red",
+          "type": "pubkey"
+        },
+        {
+          "name": "agent_blue",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "initialize_registry",
+      "discriminator": [
+        189,
+        181,
+        20,
+        17,
+        174,
+        57,
+        249,
+        59
+      ],
+      "accounts": [
+        {
+          "name": "registry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "cooldown_duration",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "request_vrf",
+      "discriminator": [
+        5,
+        87,
+        79,
+        152,
+        164,
+        176,
+        190,
+        226
+      ],
+      "accounts": [
+        {
+          "name": "game_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "game_state.game_id",
+                "account": "GameState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vrf_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  114,
+                  102,
+                  95,
+                  114,
+                  101,
+                  113,
+                  117,
+                  101,
+                  115,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "game_state.game_id",
+                "account": "GameState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "randomness_account"
+        },
+        {
+          "name": "agent",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "roll_type",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "resolve_round",
+      "discriminator": [
+        165,
+        114,
+        237,
+        158,
+        1,
+        36,
+        70,
+        254
+      ],
+      "accounts": [
+        {
+          "name": "registry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "game_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "game_state.game_id",
+                "account": "GameState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "crank",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "stay",
+      "discriminator": [
+        106,
+        212,
+        251,
+        226,
+        193,
+        182,
+        84,
+        78
+      ],
+      "accounts": [
+        {
+          "name": "game_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "game_state.game_id",
+                "account": "GameState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "player",
+          "type": {
+            "defined": {
+              "name": "Color"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "unlock_upgrade",
+      "discriminator": [
+        79,
+        107,
+        155,
+        132,
+        11,
+        87,
+        77,
+        185
+      ],
+      "accounts": [
+        {
+          "name": "game_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "game_state.game_id",
+                "account": "GameState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "prediction_market_program",
+          "signer": true,
+          "address": "H76M7bbm6zwE464xkabF5MWbciwZqK9FmZYf4omaqnQH"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "update_cooldown",
+      "discriminator": [
+        77,
+        108,
+        158,
+        221,
+        67,
+        31,
+        120,
+        146
+      ],
+      "accounts": [
+        {
+          "name": "registry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "registry"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "new_duration",
+          "type": "i64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "GameState",
+      "discriminator": [
+        144,
+        94,
+        208,
+        172,
+        248,
+        99,
+        134,
+        120
+      ]
+    },
+    {
+      "name": "Registry",
+      "discriminator": [
+        47,
+        174,
+        110,
+        246,
+        184,
+        182,
+        252,
+        218
+      ]
+    },
+    {
+      "name": "VRFRequest",
+      "discriminator": [
+        38,
+        152,
+        86,
+        6,
+        38,
+        37,
+        34,
+        207
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "CardsDealt",
+      "discriminator": [
+        115,
+        159,
+        224,
+        101,
+        212,
+        252,
+        148,
+        44
+      ]
+    },
+    {
+      "name": "GameEnded",
+      "discriminator": [
+        35,
+        93,
+        113,
+        153,
+        29,
+        144,
+        200,
+        109
+      ]
+    },
+    {
+      "name": "GameInitialised",
+      "discriminator": [
+        25,
+        60,
+        40,
+        175,
+        71,
+        125,
+        34,
+        175
+      ]
+    },
+    {
+      "name": "PlayerHit",
+      "discriminator": [
+        147,
+        28,
+        65,
+        242,
+        143,
+        216,
+        222,
+        204
+      ]
+    },
+    {
+      "name": "PlayerStayed",
+      "discriminator": [
+        217,
+        236,
+        233,
+        159,
+        74,
+        39,
+        219,
+        35
+      ]
+    },
+    {
+      "name": "RoundResolved",
+      "discriminator": [
+        204,
+        146,
+        253,
+        187,
+        8,
+        61,
+        75,
+        29
+      ]
+    },
+    {
+      "name": "VrfRequested",
+      "discriminator": [
+        50,
+        56,
+        125,
+        141,
+        222,
+        176,
+        113,
+        18
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "CooldownNotOver",
+      "msg": "Cooldown period has not elapsed yet"
+    },
+    {
+      "code": 6001,
+      "name": "GameInProgress",
+      "msg": "Cannot update cooldown while a game is in progress"
+    },
+    {
+      "code": 6002,
+      "name": "NotYourTurn",
+      "msg": "It is not this agent's turn"
+    },
+    {
+      "code": 6003,
+      "name": "UnauthorizedAgent",
+      "msg": "Signer is not a registered agent for this game"
+    },
+    {
+      "code": 6004,
+      "name": "InvalidPhase",
+      "msg": "Game is not in the correct phase for this action"
+    },
+    {
+      "code": 6005,
+      "name": "GameAlreadyEnded",
+      "msg": "Game has already ended"
+    },
+    {
+      "code": 6006,
+      "name": "GameNotEnded",
+      "msg": "Game has not ended yet"
+    },
+    {
+      "code": 6007,
+      "name": "Over21CannotHit",
+      "msg": "Player score is 21 or over, cannot hit"
+    },
+    {
+      "code": 6008,
+      "name": "RoundNotFinished",
+      "msg": "Both players must complete the final reveal before resolving the round"
+    },
+    {
+      "code": 6009,
+      "name": "RequestIdMismatch",
+      "msg": "VRF request ID mismatch"
+    },
+    {
+      "code": 6010,
+      "name": "VrfAlreadyConsumed",
+      "msg": "VRF result has already been consumed"
+    },
+    {
+      "code": 6011,
+      "name": "InvalidVrfAccount",
+      "msg": "Account is not owned by the Switchboard program"
+    },
+    {
+      "code": 6012,
+      "name": "RandomnessExpired",
+      "msg": "Randomness has expired or slot mismatch"
+    },
+    {
+      "code": 6013,
+      "name": "RandomnessAlreadyRevealed",
+      "msg": "Randomness already revealed"
+    },
+    {
+      "code": 6014,
+      "name": "RandomnessNotResolved",
+      "msg": "Randomness not yet resolved by oracle"
+    },
+    {
+      "code": 6015,
+      "name": "Overflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6016,
+      "name": "UpgradeLocked",
+      "msg": "Upgrade locked: open markets or unclaimed positions exist"
+    },
+    {
+      "code": 6017,
+      "name": "InvalidPrevGameState",
+      "msg": "Previous GameState PDA does not match expected address"
+    },
+    {
+      "code": 6018,
+      "name": "InvalidGameId",
+      "msg": "Game ID does not match registry current_game_id"
+    }
+  ],
+  "types": [
+    {
+      "name": "CardsDealt",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "game_id",
+            "type": "u64"
+          },
+          {
+            "name": "p1_score",
+            "type": "u8"
+          },
+          {
+            "name": "p2_score",
+            "type": "u8"
+          },
+          {
+            "name": "is_final_reveal",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Color",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Red"
+          },
+          {
+            "name": "Blue"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GameEnded",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "game_id",
+            "type": "u64"
+          },
+          {
+            "name": "winner",
+            "type": {
+              "defined": {
+                "name": "Color"
+              }
+            }
+          },
+          {
+            "name": "winner_agent",
+            "type": "pubkey"
+          },
+          {
+            "name": "total_rounds",
+            "type": "u8"
+          },
+          {
+            "name": "ended_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GameInitialised",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "game_id",
+            "type": "u64"
+          },
+          {
+            "name": "agent_red",
+            "type": "pubkey"
+          },
+          {
+            "name": "agent_blue",
+            "type": "pubkey"
+          },
+          {
+            "name": "starts_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GamePhase",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "AwaitingInitialDeal"
+          },
+          {
+            "name": "AwaitingHitVRF"
+          },
+          {
+            "name": "AwaitingAction"
+          },
+          {
+            "name": "AwaitingFinalRevealVRF"
+          },
+          {
+            "name": "ReadyToResolve"
+          },
+          {
+            "name": "AwaitingTiebreakerVRF"
+          },
+          {
+            "name": "Ended"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GameState",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "game_id",
+            "type": "u64"
+          },
+          {
+            "name": "agent_red",
+            "type": "pubkey"
+          },
+          {
+            "name": "agent_blue",
+            "type": "pubkey"
+          },
+          {
+            "name": "p1_hp",
+            "type": "u8"
+          },
+          {
+            "name": "p2_hp",
+            "type": "u8"
+          },
+          {
+            "name": "p1_score",
+            "type": "u8"
+          },
+          {
+            "name": "p2_score",
+            "type": "u8"
+          },
+          {
+            "name": "p1_aces",
+            "type": "u8"
+          },
+          {
+            "name": "p2_aces",
+            "type": "u8"
+          },
+          {
+            "name": "p1_stayed",
+            "type": "bool"
+          },
+          {
+            "name": "p2_stayed",
+            "type": "bool"
+          },
+          {
+            "name": "round_number",
+            "type": "u8"
+          },
+          {
+            "name": "phase",
+            "type": {
+              "defined": {
+                "name": "GamePhase"
+              }
+            }
+          },
+          {
+            "name": "active_player",
+            "type": {
+              "defined": {
+                "name": "Color"
+              }
+            }
+          },
+          {
+            "name": "winner",
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "Color"
+                }
+              }
+            }
+          },
+          {
+            "name": "pending_commit_slot",
+            "type": "u64"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "upgrade_locked",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PlayerHit",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "game_id",
+            "type": "u64"
+          },
+          {
+            "name": "player",
+            "type": {
+              "defined": {
+                "name": "Color"
+              }
+            }
+          },
+          {
+            "name": "new_score",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PlayerStayed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "game_id",
+            "type": "u64"
+          },
+          {
+            "name": "player",
+            "type": {
+              "defined": {
+                "name": "Color"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "Registry",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "game_count",
+            "type": "u64"
+          },
+          {
+            "name": "current_game_id",
+            "type": "u64"
+          },
+          {
+            "name": "cooldown_duration",
+            "type": "i64"
+          },
+          {
+            "name": "game_active",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RoundResolved",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "game_id",
+            "type": "u64"
+          },
+          {
+            "name": "round_number",
+            "type": "u8"
+          },
+          {
+            "name": "p1_hp",
+            "type": "u8"
+          },
+          {
+            "name": "p2_hp",
+            "type": "u8"
+          },
+          {
+            "name": "damage_dealt",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VRFRequest",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "game_id",
+            "type": "u64"
+          },
+          {
+            "name": "commit_slot",
+            "type": "u64"
+          },
+          {
+            "name": "sb_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "player",
+            "type": {
+              "defined": {
+                "name": "Color"
+              }
+            }
+          },
+          {
+            "name": "roll_type",
+            "type": "u8"
+          },
+          {
+            "name": "consumed",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VrfRequested",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "game_id",
+            "type": "u64"
+          },
+          {
+            "name": "player",
+            "type": {
+              "defined": {
+                "name": "Color"
+              }
+            }
+          },
+          {
+            "name": "roll_type",
+            "type": "u8"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
 
-const connection = new Connection(process.env.RPC_URL, "confirmed");
+const connection = new Connection(process.env.SOLANA_RPC_URL, "confirmed");
 
 export async function meController(request, response) {
   if (!request.auth?.user) {

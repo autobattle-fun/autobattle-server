@@ -8,46 +8,90 @@ datasource db {
 }
 
 model User {
-  id            String       @id @default(cuid())
-  privyUserId   String       @unique
-  username      String       @unique
-  authProvider  String       @default("privy")
+  id            String    @id @default(cuid())
+  privyUserId   String    @unique
+  username      String    @unique
+  authProvider  String    @default("privy")
   walletAddress String?
   email         String?
-  status        String       @default("active")
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  status        String    @default("active")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
   lastLoginAt   DateTime?
-  predictions   Prediction[]
+
+  predictions Prediction[]
+}
+
+model Match {
+  id        String @id @default(cuid())
+  gameId    Int    @unique // The on-chain global game ID
+  gamePda   String @unique // The GameState PDA
+  agentRed  String // Pubkey of the Red Agent
+  agentBlue String // Pubkey of the Blue Agent
+
+  status      MatchStatus @default(PENDING)
+  roundNumber Int         @default(1)
+  redHp       Int         @default(10)
+  blueHp      Int         @default(10)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  markets Market[] // One-to-many relationship for micro-markets
 }
 
 model Market {
-  id             String          @id @default(cuid())
-  slug           String          @unique
-  title          String
-  description    String?
+  id          String  @id @default(cuid())
+  slug        String  @unique
+  title       String
+  description String?
+
+  // SOLANA INTEGRATION FIELDS
+  matchId     String
+  match       Match  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  marketPda   String @unique
+  vaultPda    String @unique
+  marketIndex Int    @default(0) // 0 for MAIN, 1+ for mid-game markets
+
+  // MICRO-MARKET TRACKING
+  marketType       MarketType       @default(MAIN)
+  resolutionMethod ResolutionMethod @default(ON_CHAIN)
+  targetRound      Int? // Populated if MarketType is MID_GAME
+
   status         MarketStatus    @default(OPEN)
   closesAt       DateTime
   resolvesAt     DateTime?
   winningOutcome PredictionSide?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  predictions    Prediction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  predictions Prediction[]
+
+  @@index([matchId])
 }
 
 model Prediction {
-  id        String         @id @default(cuid())
-  userId    String
-  marketId  String
-  side      PredictionSide
-  amount    Decimal        @db.Decimal(20, 8)
-  createdAt DateTime       @default(now())
-  market    Market         @relation(fields: [marketId], references: [id], onDelete: Cascade)
-  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id       String         @id @default(cuid())
+  userId   String
+  marketId String
+  side     PredictionSide // YES = Red, NO = Blue
+  amount   Decimal        @db.Decimal(20, 8)
+
+  // SOLANA INTEGRATION FIELDS
+  positionPda String  @unique // The on-chain userPosition PDA
+  hasClaimed  Boolean @default(false) // Prevents double-claiming UI states
+
+  createdAt DateTime @default(now())
+
+  market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([marketId])
   @@index([userId])
 }
+
+// ── Enums ─────────────────────────────────────────────────────────
 
 enum MarketStatus {
   OPEN
@@ -55,7 +99,23 @@ enum MarketStatus {
   CANCELED
 }
 
+enum MatchStatus {
+  PENDING // Market is OPEN, waiting for initial deal
+  ACTIVE // Match is fighting / dealing cards
+  RESOLVED // HP hit 0, Game over
+}
+
 enum PredictionSide {
-  YES
-  NO
+  YES // Betting on Red (or 'Yes' for mid-game props)
+  NO // Betting on Blue (or 'No' for mid-game props)
+}
+
+enum MarketType {
+  MAIN // The overall "Who will win the match?" market
+  MID_GAME // Per-round micro-bets (e.g., "Will Red bust this round?")
+}
+
+enum ResolutionMethod {
+  ON_CHAIN // Resolved strictly by smart contract math (HP = 0)
+  AI_AGENT // Resolved by AI agent interpreting round results
 }
