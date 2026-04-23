@@ -1,5 +1,11 @@
 import * as anchor from "@coral-xyz/anchor";
-import { Connection, Keypair, PublicKey, SystemProgram, ComputeBudgetProgram } from "@solana/web3.js";
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  ComputeBudgetProgram,
+} from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import * as sb from "@switchboard-xyz/on-demand";
 import BN from "bn.js";
@@ -13,6 +19,7 @@ import {
   deriveMarketPda,
   deriveVaultPda,
 } from "../utils/solana.helpers.js";
+import bs58 from "bs58";
 
 // ── IDL Loading ─────────────────────────────────────────────────────
 
@@ -56,12 +63,10 @@ class SolanaService {
     this.wallet = new anchor.Wallet(this.crankKeypair);
 
     // 3. Agent Wallets (separate keypairs for Red/Blue agent signing)
-    const redKeyArray = Uint8Array.from(JSON.parse(env.AGENT_RED_PRIVATE_KEY));
+    const redKeyArray = bs58.decode(env.AGENT_RED_PRIVATE_KEY);
     this.agentRedKeypair = Keypair.fromSecretKey(redKeyArray);
 
-    const blueKeyArray = Uint8Array.from(
-      JSON.parse(env.AGENT_BLUE_PRIVATE_KEY),
-    );
+    const blueKeyArray = bs58.decode(env.AGENT_BLUE_PRIVATE_KEY);
     this.agentBlueKeypair = Keypair.fromSecretKey(blueKeyArray);
 
     // 4. Anchor Provider
@@ -71,16 +76,9 @@ class SolanaService {
     anchor.setProvider(this.provider);
 
     // 5. Programs
-    this.gameEngine = new anchor.Program(
-      gameEngineIdl,
-      GAME_ENGINE_PROGRAM_ID,
-      this.provider,
-    );
-    this.predMarket = new anchor.Program(
-      predMarketIdl,
-      PRED_MARKET_PROGRAM_ID,
-      this.provider,
-    );
+    this.gameEngine = new anchor.Program(gameEngineIdl, this.provider);
+
+    this.predMarket = new anchor.Program(predMarketIdl, this.provider);
 
     // 6. Switchboard (lazy-initialised)
     this._sbProgram = null;

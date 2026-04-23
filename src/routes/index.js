@@ -4,6 +4,7 @@ import { authRoutes } from "./auth.routes.js";
 import { userRoutes } from "./user.routes.js";
 import { gameRoutes } from "./game.routes.js";
 import { marketRoutes } from "./market.routes.js";
+import { testRoutes } from "./test.routes.js";
 
 export const apiRoutes = Router();
 

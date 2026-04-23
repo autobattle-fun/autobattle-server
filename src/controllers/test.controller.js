@@ -7,6 +7,8 @@ import {
   PRED_MARKET_PROGRAM_ID,
 } from "../services/solana.service.js";
 import { prisma } from "../db/prisma.js";
+import { ROLL_TYPE } from "../services/solana.service.js";
+import { randomUUID } from "crypto";
 
 // Optional: Put your $AUTO token mint address in your .env
 // For testing, we can default to a placeholder if it's missing
@@ -60,10 +62,8 @@ export async function createMarket(req, res) {
 
     console.log(`[BLOCKCHAIN] Initializing Match #${nextGameId}...`);
 
-    // For testing, we are using the Crank as both Agent Red and Agent Blue.
-    // In production, these would be the actual AI Agent pubkeys.
-    const agentRed = crank;
-    const agentBlue = crank;
+    const agentRed = solanaService.agentRedKeypair.publicKey;
+    const agentBlue = solanaService.agentBlueKeypair.publicKey;
 
     // 3. Execute Blockchain Transactions
     // Init Game
@@ -110,6 +110,9 @@ export async function createMarket(req, res) {
           agentRed: agentRed.toBase58(),
           agentBlue: agentBlue.toBase58(),
           status: "PENDING",
+          matchUuid: randomUUID(), // Generates a unique UUID for the chat
+          llmRed: "meta-llama/llama-3-8b-instruct", // Placeholder OpenRouter model
+          llmBlue: "mistralai/mixtral-8x7b-instruct", // Placeholder OpenRouter model
         },
       });
 
@@ -138,6 +141,259 @@ export async function createMarket(req, res) {
     });
   } catch (error) {
     console.error("Error creating market:", error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+export async function dealCards(req, res) {
+  const gameId = Number(req.params.gameId);
+  try {
+    console.log(`[BLOCKCHAIN] Requesting Initial Deal for Match #${gameId}...`);
+    const txSig = await solanaService.vrfStep(gameId, ROLL_TYPE.INITIAL_DEAL);
+
+    // Update DB status to ACTIVE
+    await prisma.match.updateMany({
+      where: { gameId: gameId },
+      data: { status: "ACTIVE" },
+    });
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Cards dealt.", txSig });
+  } catch (error) {
+    console.error("Deal error:", error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+// --- 2. Agent Stay ---
+export async function agentStay(req, res) {
+  const gameId = Number(req.params.gameId);
+  const player = req.params.player.toUpperCase(); // "RED" or "BLUE"
+
+  try {
+    console.log(`[BLOCKCHAIN] Agent ${player} staying in Match #${gameId}...`);
+    const txSig = await solanaService.stay(gameId, player);
+    return res
+      .status(200)
+      .json({ success: true, message: `${player} stayed.`, txSig });
+  } catch (error) {
+    console.error(`Stay error (${player}):`, error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+export async function agentHit(req, res) {
+  const gameId = Number(req.params.gameId);
+  const player = req.params.player.toUpperCase(); // "RED" or "BLUE"
+
+  if (isNaN(gameId)) {
+    return res.status(400).json({
+      success: false,
+      error: "Invalid gameId. Use /hit/<number>/<player>",
+    });
+  }
+
+  if (player !== "RED" && player !== "BLUE") {
+    return res.status(400).json({
+      success: false,
+      error: "Invalid player. Must be 'red' or 'blue'.",
+    });
+  }
+
+  try {
+    console.log(`[BLOCKCHAIN] Agent ${player} hitting in Match #${gameId}...`);
+
+    // We pass the player color so the correct agent wallet signs the VRF request
+    const txSig = await solanaService.vrfStep(gameId, ROLL_TYPE.HIT, player);
+
+    return res.status(200).json({
+      success: true,
+      message: `${player} hit and received a new card.`,
+      txSig,
+    });
+  } catch (error) {
+    console.error(`Hit error (${player}):`, error);
+
+    // Catch common contract errors gracefully
+    if (error.message.includes("NotYourTurn")) {
+      return res
+        .status(400)
+        .json({ success: false, error: "It is not this agent's turn." });
+    }
+    if (error.message.includes("Over21CannotHit")) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Agent is already busted (>= 21)." });
+    }
+
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+// --- 3. Final Reveal / River Card (VRF 2) ---
+export async function revealRiver(req, res) {
+  const gameId = Number(req.params.gameId);
+  try {
+    console.log(`[BLOCKCHAIN] Revealing River Cards for Match #${gameId}...`);
+    const txSig = await solanaService.vrfStep(gameId, ROLL_TYPE.FINAL_REVEAL);
+    return res
+      .status(200)
+      .json({ success: true, message: "River cards revealed.", txSig });
+  } catch (error) {
+    console.error("River reveal error:", error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+// --- 4. Resolve Round (and check for Tiebreaker/Game Over) ---
+export async function resolveRound(req, res) {
+  const gameId = Number(req.params.gameId);
+  try {
+    console.log(`[BLOCKCHAIN] Resolving Round for Match #${gameId}...`);
+
+    // Re-derive Market PDA to pass as a remaining account
+    const [marketPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("market"), gameIdBuf(gameId), u8Buf(0)],
+      PRED_MARKET_PROGRAM_ID,
+    );
+
+    let txSig;
+    try {
+      txSig = await solanaService.resolveRound(gameId, marketPda);
+    } catch (e) {
+      if (
+        e.message.includes("MarketAlreadyResolved") ||
+        e.message.includes("GameAlreadyEnded")
+      ) {
+        console.log("Match is already fully resolved.");
+      } else {
+        throw e; // Re-throw if it's a real error
+      }
+    }
+
+    // Fetch the latest state to see what happened
+    const gs = await solanaService.fetchGameState(gameId);
+    const phaseKey = Object.keys(gs.phase)[0];
+
+    // Sync HP to Database
+    await prisma.match.updateMany({
+      where: { gameId: gameId },
+      data: { redHp: gs.p1Hp, blueHp: gs.p2Hp },
+    });
+
+    let message = `Round resolved. Red HP: ${gs.p1Hp} | Blue HP: ${gs.p2Hp}`;
+    if (phaseKey === "ended") {
+      message = `MATCH OVER! Winner: ${gs.p1Hp === 0 ? "BLUE" : "RED"}`;
+      await prisma.match.updateMany({
+        where: { gameId },
+        data: { status: "RESOLVED" },
+      });
+    } else if (phaseKey === "awaitingTiebreakerVrf") {
+      message = "TIE! Sudden death tiebreaker required.";
+    }
+
+    return res
+      .status(200)
+      .json({ success: true, message, phase: phaseKey, txSig });
+  } catch (error) {
+    console.error("Resolve error:", error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+// --- 5. Tiebreaker (VRF 3) ---
+export async function resolveTiebreaker(req, res) {
+  const gameId = Number(req.params.gameId);
+  try {
+    console.log(`[BLOCKCHAIN] Running Tiebreaker for Match #${gameId}...`);
+    const txSigVrf = await solanaService.vrfStep(gameId, ROLL_TYPE.TIEBREAKER);
+
+    // Must immediately resolve round again after tiebreaker VRF
+    const [marketPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("market"), gameIdBuf(gameId), u8Buf(0)],
+      PRED_MARKET_PROGRAM_ID,
+    );
+    const txSigResolve = await solanaService.resolveRound(gameId, marketPda);
+
+    const gs = await solanaService.fetchGameState(gameId);
+
+    return res.status(200).json({
+      success: true,
+      message: "Tiebreaker resolved.",
+      txSigVrf,
+      txSigResolve,
+      redHp: gs.p1Hp,
+      blueHp: gs.p2Hp,
+    });
+  } catch (error) {
+    console.error("Tiebreaker error:", error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+// --- 6. Fetch Game Stats (On-Chain State) ---
+export async function getGameStats(req, res) {
+  const gameId = Number(req.params.gameId);
+
+  if (isNaN(gameId)) {
+    return res.status(400).json({
+      success: false,
+      error: "Invalid gameId provided. Make sure to use /stats/<number>",
+    });
+  }
+
+  try {
+    console.log(`[BLOCKCHAIN] Fetching on-chain state for Match #${gameId}...`);
+
+    // Fetch the raw state from the smart contract
+    const gs = await solanaService.fetchGameState(gameId);
+
+    // Anchor returns Enums as objects (e.g., { awaitingAction: {} })
+    // We extract just the string key to make it readable for the frontend
+    const currentPhase = Object.keys(gs.phase)[0];
+    const activePlayer = Object.keys(gs.activePlayer)[0];
+    const winner = gs.winner ? Object.keys(gs.winner)[0] : null;
+
+    // Format the response, converting BigNumbers (BN) to standard JavaScript numbers
+    const stats = {
+      gameId: gs.gameId.toNumber(),
+      phase: currentPhase,
+      roundNumber: gs.roundNumber,
+      activePlayer: activePlayer.toUpperCase(),
+      winner: winner ? winner.toUpperCase() : null,
+      agents: {
+        red: gs.agentRed.toBase58(),
+        blue: gs.agentBlue.toBase58(),
+      },
+      red: {
+        hp: gs.p1Hp,
+        score: gs.p1Score,
+        aces: gs.p1Aces,
+        hasStayed: gs.p1Stayed,
+      },
+      blue: {
+        hp: gs.p2Hp,
+        score: gs.p2Score,
+        aces: gs.p2Aces,
+        hasStayed: gs.p2Stayed,
+      },
+    };
+
+    return res.status(200).json({
+      success: true,
+      data: stats,
+    });
+  } catch (error) {
+    console.error("Fetch stats error:", error);
+
+    // If the account doesn't exist yet, Anchor throws a specific error
+    if (error.message.includes("Account does not exist")) {
+      return res
+        .status(404)
+        .json({ success: false, error: "Match not found on-chain." });
+    }
+
     return res.status(500).json({ success: false, error: error.message });
   }
 }
