@@ -49,6 +49,15 @@ const envSchema = z.object({
     .string()
     .default("Aio4gaXjXzJNVLtzwtNVmSqGKpANtXhybbkhtAC94ji2"),
 
+  // ── Agent Wallets ──
+  AGENT_RED_PRIVATE_KEY: z.string().min(1, "AGENT_RED_PRIVATE_KEY is required"),
+  AGENT_BLUE_PRIVATE_KEY: z
+    .string()
+    .min(1, "AGENT_BLUE_PRIVATE_KEY is required"),
+
+  // ── LLM API ──
+  LLM_API_ENDPOINT: z.string().url("LLM_API_ENDPOINT must be a valid URL"),
+
   // ── Crank Engine ──
   CRANK_INTERVAL_MS: z.coerce.number().int().positive().default(10_000),
   CRANK_ENABLED: z

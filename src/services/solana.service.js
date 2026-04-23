@@ -55,13 +55,22 @@ class SolanaService {
     this.crankKeypair = Keypair.fromSecretKey(secretKeyArray);
     this.wallet = new anchor.Wallet(this.crankKeypair);
 
-    // 3. Anchor Provider
+    // 3. Agent Wallets (separate keypairs for Red/Blue agent signing)
+    const redKeyArray = Uint8Array.from(JSON.parse(env.AGENT_RED_PRIVATE_KEY));
+    this.agentRedKeypair = Keypair.fromSecretKey(redKeyArray);
+
+    const blueKeyArray = Uint8Array.from(
+      JSON.parse(env.AGENT_BLUE_PRIVATE_KEY),
+    );
+    this.agentBlueKeypair = Keypair.fromSecretKey(blueKeyArray);
+
+    // 4. Anchor Provider
     this.provider = new anchor.AnchorProvider(this.connection, this.wallet, {
       preflightCommitment: "confirmed",
     });
     anchor.setProvider(this.provider);
 
-    // 4. Programs
+    // 5. Programs
     this.gameEngine = new anchor.Program(
       gameEngineIdl,
       GAME_ENGINE_PROGRAM_ID,
@@ -73,15 +82,26 @@ class SolanaService {
       this.provider,
     );
 
-    // 5. Switchboard (lazy-initialised)
+    // 6. Switchboard (lazy-initialised)
     this._sbProgram = null;
     this._sbQueue = null;
 
     logger.info("Solana Service initialized", {
       crank: this.crankKeypair.publicKey.toBase58(),
+      agentRed: this.agentRedKeypair.publicKey.toBase58(),
+      agentBlue: this.agentBlueKeypair.publicKey.toBase58(),
       gameEngine: GAME_ENGINE_PROGRAM_ID.toBase58(),
       predMarket: PRED_MARKET_PROGRAM_ID.toBase58(),
     });
+  }
+
+  /**
+   * Get the keypair for a specific agent color.
+   * @param {"RED" | "BLUE"} player
+   * @returns {Keypair}
+   */
+  getAgentKeypair(player) {
+    return player === "RED" ? this.agentRedKeypair : this.agentBlueKeypair;
   }
 
   // ── Switchboard Lazy Init ───────────────────────────────────────
@@ -167,17 +187,20 @@ class SolanaService {
 
   async stay(gameId, player) {
     const [gamePda] = deriveGamePda(gameId);
-    const crank = this.crankKeypair.publicKey;
+    const agentKp = this.getAgentKeypair(player);
 
     const colorArg = player === "RED" ? { red: {} } : { blue: {} };
 
-    const txSig = await this.gameEngine.methods
+    const stayIx = await this.gameEngine.methods
       .stay(colorArg)
       .accounts({
         gameState: gamePda,
-        agent: crank,
+        agent: agentKp.publicKey,
       })
-      .rpc();
+      .instruction();
+
+    const tx = new anchor.web3.Transaction().add(stayIx);
+    const txSig = await this.provider.sendAndConfirm(tx, [agentKp]);
 
     logger.info("Agent stayed", { gameId, player, txSig });
     return txSig;
@@ -228,12 +251,25 @@ class SolanaService {
    * 5. Reveal randomness
    * 6. Call fulfill_vrf on-chain
    */
-  async vrfStep(gameId, rollType) {
+  /**
+   * @param {number} gameId
+   * @param {number} rollType - ROLL_TYPE enum value
+   * @param {"RED" | "BLUE"} [agentColor] - Which agent signs the request_vrf.
+   *   For initial deal (type 0), final reveal (type 2), and tiebreaker (type 3),
+   *   the crank signs. For hit (type 1), the active agent signs.
+   */
+  async vrfStep(gameId, rollType, agentColor) {
     await this._ensureSwitchboard();
 
     const [gamePda] = deriveGamePda(gameId);
     const [vrfRequestPda] = deriveVrfRequestPda(gameId);
     const crank = this.crankKeypair.publicKey;
+
+    // Determine who signs the request_vrf instruction
+    const isAgentSigned = rollType === 1 && agentColor;
+    const signerKp = isAgentSigned
+      ? this.getAgentKeypair(agentColor)
+      : this.crankKeypair;
 
     // 1. Create randomness account
     const rngKeypair = Keypair.generate();
@@ -259,14 +295,15 @@ class SolanaService {
         gameState: gamePda,
         vrfRequest: vrfRequestPda,
         randomnessAccount: rngKeypair.publicKey,
-        agent: crank,
+        agent: signerKp.publicKey,
         systemProgram: SystemProgram.programId,
       })
       .instruction();
 
-    await this.provider.sendAndConfirm(
-      new anchor.web3.Transaction().add(commitIx, reqIx),
-    );
+    const commitTx = new anchor.web3.Transaction().add(commitIx, reqIx);
+    // Include agent keypair as additional signer if it's not the crank
+    const commitSigners = isAgentSigned ? [signerKp] : [];
+    await this.provider.sendAndConfirm(commitTx, commitSigners);
 
     // 3. Wait for oracle to settle
     await this._sleep(VRF_SETTLE_DELAY_MS);
@@ -288,7 +325,7 @@ class SolanaService {
       new anchor.web3.Transaction().add(revealIx, fillIx),
     );
 
-    logger.info("VRF step complete", { gameId, rollType, txSig });
+    logger.info("VRF step complete", { gameId, rollType, agentColor, txSig });
     return txSig;
   }
 

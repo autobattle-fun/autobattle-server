@@ -8,7 +8,6 @@ import {
 } from "../services/game.service.js";
 import {
   validate,
-  startMatchSchema,
   advanceMatchSchema,
   listMatchesSchema,
 } from "../utils/validators.js";
@@ -16,14 +15,14 @@ import {
 /**
  * POST /games/start
  * Start a new match (init game + create market on-chain + Prisma).
+ * Agent wallets and LLM models are selected automatically.
  */
 export async function startMatchController(request, response) {
-  const body = validate(startMatchSchema, request.body || {});
-  const result = await startMatch(body);
+  const result = await startMatch();
 
   return response.status(201).json({
     success: true,
-    message: `Match #${result.match.gameId} created successfully.`,
+    message: `Match #${result.match.gameId} created — ${result.match.llmRed} vs ${result.match.llmBlue}`,
     data: result,
   });
 }

@@ -1,7 +1,10 @@
+import crypto from "node:crypto";
 import { prisma } from "../db/prisma.js";
 import { logger } from "../lib/logger.js";
 import { solanaService, ROLL_TYPE } from "./solana.service.js";
 import { decideAction } from "../lib/agent-strategy.js";
+import { selectMatchModels } from "../lib/llm-client.js";
+import { wsEvents } from "../lib/websocket.js";
 import {
   deriveGamePda,
   deriveMarketPda,
@@ -14,44 +17,61 @@ import {
 
 /**
  * Start a brand new match:
- *  1. Fetch next game ID from on-chain registry
- *  2. Init game on-chain
- *  3. Create on-chain prediction market
- *  4. Persist Match + Market records in Prisma
+ *  1. Generate a UUID for LLM chat context
+ *  2. Select two random OpenRouter LLMs (one per agent)
+ *  3. Fetch next game ID from on-chain registry
+ *  4. Init game on-chain with separate agent wallets
+ *  5. Create on-chain prediction market
+ *  6. Persist Match + Market records in Prisma
+ *  7. Broadcast match:created via WebSocket
  */
-export async function startMatch({ agentRed, agentBlue } = {}) {
-  const crank = solanaService.crankKeypair.publicKey;
+export async function startMatch() {
+  // 1. Generate match UUID for LLM conversations
+  const matchUuid = crypto.randomUUID();
 
-  // Default agents to crank wallet (as per test.controller.js pattern)
-  const redAgent = agentRed || crank.toBase58();
-  const blueAgent = agentBlue || crank.toBase58();
+  // 2. Select random LLMs for this match
+  const { redModel, blueModel } = selectMatchModels();
 
-  // 1. Get next game ID
+  // 3. Agent wallet public keys (from env-configured keypairs)
+  const redAgent = solanaService.agentRedKeypair.publicKey.toBase58();
+  const blueAgent = solanaService.agentBlueKeypair.publicKey.toBase58();
+
+  // 4. Get next game ID
   const gameId = await solanaService.getNextGameId();
 
-  // 2. Derive PDAs
+  // 5. Derive PDAs
   const [gamePda] = deriveGamePda(gameId);
   const [marketPda] = deriveMarketPda(gameId, 0);
   const [vaultPda] = deriveVaultPda(gameId, 0);
 
-  logger.info("Starting match", { gameId, redAgent, blueAgent });
+  logger.info("Starting match", {
+    gameId,
+    matchUuid,
+    llmRed: redModel,
+    llmBlue: blueModel,
+    redAgent,
+    blueAgent,
+  });
 
-  // 3. Init game on-chain
+  // 6. Init game on-chain
   await solanaService.initGame(gameId, redAgent, blueAgent);
 
-  // 4. Create market on-chain (100 year expiry — permanent polymarket mode)
+  // 7. Create market on-chain (100 year expiry — permanent polymarket mode)
   const closesAtUnix = Math.floor(Date.now() / 1000) + 3_153_600_000;
   const question = `Will Red Win Match #${gameId}?`;
   await solanaService.createOnChainMarket(gameId, 0, question, closesAtUnix);
 
-  // 5. Persist to database
+  // 8. Persist to database
   const result = await prisma.$transaction(async (tx) => {
     const match = await tx.match.create({
       data: {
         gameId,
         gamePda: gamePda.toBase58(),
+        matchUuid,
         agentRed: redAgent,
         agentBlue: blueAgent,
+        llmRed: redModel,
+        llmBlue: blueModel,
         status: "PENDING",
       },
     });
@@ -59,8 +79,8 @@ export async function startMatch({ agentRed, agentBlue } = {}) {
     const market = await tx.market.create({
       data: {
         slug: `match-${gameId}-main`,
-        title: `Match #${gameId}: Red vs Blue`,
-        description: "Main prediction market for the overall match winner.",
+        title: `Match #${gameId}: ${redModel.split("/").pop()} vs ${blueModel.split("/").pop()}`,
+        description: `${redModel} (Red) vs ${blueModel} (Blue) — Main prediction market.`,
         matchId: match.id,
         marketPda: marketPda.toBase58(),
         vaultPda: vaultPda.toBase58(),
@@ -74,7 +94,15 @@ export async function startMatch({ agentRed, agentBlue } = {}) {
     return { match, market };
   });
 
-  logger.info("Match started", { matchId: result.match.id, gameId });
+  // 9. Broadcast via WebSocket
+  wsEvents.matchCreated(result.match);
+
+  logger.info("Match started", {
+    matchId: result.match.id,
+    gameId,
+    llmRed: redModel,
+    llmBlue: blueModel,
+  });
   return result;
 }
 
@@ -83,11 +111,12 @@ export async function startMatch({ agentRed, agentBlue } = {}) {
 /**
  * Play a single round for a match. This drives the complete round loop:
  *  1. Initial deal (VRF type 0)
- *  2. Agent decisions (strategic hits/stays)
+ *  2. LLM agent decisions (strategic hits/stays)
  *  3. River card (VRF type 2)
  *  4. Resolve round
  *  5. Handle tiebreaker if needed
  *  6. Sync state to Prisma
+ *  7. Broadcast updates via WebSocket
  *
  * Returns the updated game state.
  */
@@ -109,10 +138,13 @@ export async function playRound(matchId) {
     throw error;
   }
 
-  const { gameId } = match;
+  const { gameId, matchUuid, llmRed, llmBlue } = match;
   const marketPda = match.markets[0]?.marketPda;
 
   logger.info("Playing round", { matchId, gameId, round: match.roundNumber });
+
+  // Broadcast round start
+  wsEvents.roundStarted(matchId, match.roundNumber, gameId);
 
   // Activate match if still pending
   if (match.status === "PENDING") {
@@ -125,18 +157,32 @@ export async function playRound(matchId) {
   // 1. Initial Deal
   await solanaService.vrfStep(gameId, ROLL_TYPE.INITIAL_DEAL);
 
-  // 2. Agent Decisions — strategic hit/stay loop
+  // Fetch state after deal and broadcast
   let gameState = await solanaService.fetchGameState(gameId);
+  wsEvents.cardsDealt(matchId, {
+    p1Score: gameState.p1Score,
+    p2Score: gameState.p2Score,
+    isFinalReveal: false,
+  });
+
+  // 2. LLM Agent Decisions — strategic hit/stay loop
   await runAgentTurns(gameId, gameState, match);
 
   // 3. River Card (Final Reveal)
   await solanaService.vrfStep(gameId, ROLL_TYPE.FINAL_REVEAL);
 
+  // Fetch state after river and broadcast
+  gameState = await solanaService.fetchGameState(gameId);
+  wsEvents.cardsDealt(matchId, {
+    p1Score: gameState.p1Score,
+    p2Score: gameState.p2Score,
+    isFinalReveal: true,
+  });
+
   // 4. Resolve Round
   try {
     await solanaService.resolveRound(gameId, marketPda);
   } catch (error) {
-    // If market already resolved, that's fine (game contract handles it)
     if (!error.logs?.some((l) => l.includes("MarketAlreadyResolved"))) {
       throw error;
     }
@@ -149,6 +195,10 @@ export async function playRound(matchId) {
 
   while (phase === "AWAITING_TIEBREAKER_VRF") {
     logger.info("Tiebreaker — sudden death", { gameId });
+    wsEvents.tiebreakerStarted(matchId, {
+      roundNumber: gameState.roundNumber,
+    });
+
     await solanaService.vrfStep(gameId, ROLL_TYPE.TIEBREAKER);
 
     try {
@@ -166,15 +216,40 @@ export async function playRound(matchId) {
   // 6. Sync state to Prisma
   const updatedMatch = await syncMatchState(match, gameState);
 
+  // 7. Broadcast HP update
+  wsEvents.hpUpdated(matchId, {
+    redHp: gameState.p1Hp,
+    blueHp: gameState.p2Hp,
+  });
+
+  // 8. Broadcast round resolved
+  wsEvents.roundResolved(matchId, {
+    roundNumber: gameState.roundNumber,
+    redHp: gameState.p1Hp,
+    blueHp: gameState.p2Hp,
+    damageDealt: Math.pow(2, match.roundNumber - 1),
+  });
+
+  const serialized = serializeGameState(gameState);
+
+  // 9. If match ended, broadcast
+  if (updatedMatch.status === "RESOLVED") {
+    wsEvents.matchEnded(matchId, {
+      winner: serialized.winner,
+      gameId,
+      totalRounds: gameState.roundNumber,
+    });
+  }
+
   return {
     match: updatedMatch,
-    gameState: serializeGameState(gameState),
+    gameState: serialized,
   };
 }
 
 /**
  * Run agent turns (hit/stay) for both Red and Blue.
- * Each agent evaluates their hand using the AI strategy module.
+ * Each agent is powered by an LLM that evaluates the hand.
  */
 async function runAgentTurns(gameId, initialGameState, match) {
   let gameState = initialGameState;
@@ -194,44 +269,72 @@ async function runAgentTurns(gameId, initialGameState, match) {
 /**
  * Run a single agent's turn — loop hit/stay until the agent stays
  * or is forced to stay (score >= 21).
+ *
+ * The decision is made by the LLM assigned to this agent.
  */
 async function runSingleAgentTurn(gameId, player, gameState, match) {
   const isRed = player === "RED";
+  const model = isRed ? match.llmRed : match.llmBlue;
+
   let myScore = isRed ? gameState.p1Score : gameState.p2Score;
   let opponentScore = isRed ? gameState.p2Score : gameState.p1Score;
+  let myStayed = isRed ? gameState.p1Stayed : gameState.p2Stayed;
+  let opponentStayed = isRed ? gameState.p2Stayed : gameState.p1Stayed;
+  let myAces = isRed ? gameState.p1Aces : gameState.p2Aces;
+
   const myHp = isRed ? match.redHp : match.blueHp;
   const opponentHp = isRed ? match.blueHp : match.redHp;
   const roundNumber = match.roundNumber;
 
-  let stayed = isRed ? gameState.p1Stayed : gameState.p2Stayed;
-
-  while (!stayed) {
-    const decision = decideAction({
+  while (!myStayed) {
+    // Call LLM for decision
+    const decision = await decideAction({
+      chatId: match.matchUuid,
+      model,
+      player,
       myScore,
       opponentScore,
       myHp,
       opponentHp,
       roundNumber,
+      myStayed,
+      opponentStayed,
+      myAces,
+    });
+
+    // Broadcast the agent's decision
+    wsEvents.agentDecision(match.id, {
       player,
+      action: decision,
+      model,
+      score: myScore,
     });
 
     if (decision === "HIT") {
-      // Request VRF for hit
-      await solanaService.vrfStep(gameId, ROLL_TYPE.HIT);
+      // Request VRF for hit — signed by the agent's keypair
+      await solanaService.vrfStep(gameId, ROLL_TYPE.HIT, player);
 
       // Re-fetch to see updated score
       const updatedState = await solanaService.fetchGameState(gameId);
       myScore = isRed ? updatedState.p1Score : updatedState.p2Score;
       opponentScore = isRed ? updatedState.p2Score : updatedState.p1Score;
-      stayed = isRed ? updatedState.p1Stayed : updatedState.p2Stayed;
+      myStayed = isRed ? updatedState.p1Stayed : updatedState.p2Stayed;
+      opponentStayed = isRed ? updatedState.p2Stayed : updatedState.p1Stayed;
+      myAces = isRed ? updatedState.p1Aces : updatedState.p2Aces;
 
       // Contract may have forced a stay if score >= 21
-      if (stayed) {
+      if (myStayed) {
         logger.info("Agent force-stayed by contract", { player, myScore });
+        wsEvents.agentDecision(match.id, {
+          player,
+          action: "FORCED_STAY",
+          model,
+          score: myScore,
+        });
         return;
       }
     } else {
-      // Stay
+      // Stay — signed by the agent's keypair
       await solanaService.stay(gameId, player);
       return;
     }
@@ -246,12 +349,14 @@ async function runSingleAgentTurn(gameId, player, gameState, match) {
 async function syncMatchState(match, gameState) {
   const phase = parseGamePhase(gameState.phase);
   const isEnded = phase === "ENDED";
+  const winner = isEnded ? parseColor(gameState.winner) : null;
 
   const updateData = {
     redHp: gameState.p1Hp,
     blueHp: gameState.p2Hp,
     roundNumber: gameState.roundNumber,
     status: isEnded ? "RESOLVED" : "ACTIVE",
+    winner: winner || undefined,
   };
 
   const updatedMatch = await prisma.match.update({
@@ -261,7 +366,6 @@ async function syncMatchState(match, gameState) {
 
   // If game ended, sync market resolution
   if (isEnded) {
-    const winner = parseColor(gameState.winner);
     const winningOutcome = winner === "RED" ? "YES" : "NO";
 
     await prisma.market.updateMany({
@@ -277,6 +381,8 @@ async function syncMatchState(match, gameState) {
       matchId: match.id,
       gameId: match.gameId,
       winner,
+      llmRed: match.llmRed,
+      llmBlue: match.llmBlue,
     });
   }
 

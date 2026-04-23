@@ -5,6 +5,7 @@ import { logger } from "./lib/logger.js";
 import { prisma } from "./db/prisma.js";
 import { redis } from "./db/redis.js";
 import { startCrankEngine, stopCrankEngine } from "./lib/crank.js";
+import { initWebSocket } from "./lib/websocket.js";
 
 async function start(workerId) {
   try {
@@ -35,6 +36,9 @@ async function start(workerId) {
       port: env.PORT,
       env: env.NODE_ENV,
     });
+
+    // Initialize WebSocket server on top of HTTP server
+    initWebSocket(server);
 
     // Start crank engine on worker 1 only to avoid duplicates
     if (workerId === 1) {

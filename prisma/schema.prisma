@@ -26,13 +26,17 @@ model Match {
   id        String @id @default(cuid())
   gameId    Int    @unique // The on-chain global game ID
   gamePda   String @unique // The GameState PDA
+  matchUuid String @unique // UUID for LLM chat context (chatId)
   agentRed  String // Pubkey of the Red Agent
   agentBlue String // Pubkey of the Blue Agent
+  llmRed    String // OpenRouter model name for Red agent
+  llmBlue   String // OpenRouter model name for Blue agent
 
   status      MatchStatus @default(PENDING)
   roundNumber Int         @default(1)
   redHp       Int         @default(10)
   blueHp      Int         @default(10)
+  winner      String?     // "RED" or "BLUE" — set on resolution
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

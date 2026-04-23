@@ -12,13 +12,6 @@ const predictionSide = z.enum(["YES", "NO"]);
 
 // ── Request Schemas ─────────────────────────────────────────────────
 
-export const startMatchSchema = z
-  .object({
-    agentRed: solanaAddress.optional(),
-    agentBlue: solanaAddress.optional(),
-  })
-  .strict();
-
 export const advanceMatchSchema = z
   .object({
     rounds: z.coerce.number().int().min(1).max(10).default(1),
