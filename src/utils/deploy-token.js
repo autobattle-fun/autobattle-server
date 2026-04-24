@@ -68,7 +68,7 @@ async function main() {
     console.log(
       `✅ Success! View transaction: https://explorer.solana.com/tx/${txSig}?cluster=devnet`,
     );
-    console.log(`\nSave this Mint Address to your .env as AUTO_MINT_ADDRESS:`);
+    console.log(`\nSave this Mint Address to your .env as AUTO_TOKEN_ADDRESS:`);
     console.log(mint.toBase58());
   } catch (error) {
     console.error("Error deploying or minting token:", error);

@@ -211,17 +211,17 @@ class SolanaService {
 
     const remainingAccounts = marketPda
       ? [
-          {
-            pubkey: new PublicKey(marketPda),
-            isWritable: true,
-            isSigner: false,
-          },
-          {
-            pubkey: PRED_MARKET_PROGRAM_ID,
-            isWritable: false,
-            isSigner: false,
-          },
-        ]
+        {
+          pubkey: new PublicKey(marketPda),
+          isWritable: true,
+          isSigner: false,
+        },
+        {
+          pubkey: PRED_MARKET_PROGRAM_ID,
+          isWritable: false,
+          isSigner: false,
+        },
+      ]
       : [];
 
     const txSig = await this.gameEngine.methods
@@ -334,8 +334,8 @@ class SolanaService {
     const [vaultPda] = deriveVaultPda(gameId, marketIndex);
     const crank = this.crankKeypair.publicKey;
 
-    const autoMint = env.AUTO_MINT_ADDRESS
-      ? new PublicKey(env.AUTO_MINT_ADDRESS)
+    const autoMint = env.AUTO_TOKEN_ADDRESS
+      ? new PublicKey(env.AUTO_TOKEN_ADDRESS)
       : crank; // Fallback for testing (see test.controller.js pattern)
 
     const txSig = await this.predMarket.methods

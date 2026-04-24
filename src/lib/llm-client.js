@@ -7,20 +7,26 @@ import { logger } from "./logger.js";
 // A curated list of capable LLMs available on OpenRouter.
 // One model is randomly selected per agent per match.
 
-const OPENROUTER_MODELS = Object.freeze([
-  "openai/gpt-4o",
-  "openai/gpt-4o-mini",
-  "anthropic/claude-3.5-sonnet",
-  "anthropic/claude-3-haiku",
-  "google/gemini-2.0-flash-001",
-  "google/gemini-2.5-flash-preview",
-  "meta-llama/llama-3.1-70b-instruct",
-  "meta-llama/llama-3.1-8b-instruct",
-  "mistralai/mistral-large",
-  "mistralai/mistral-small",
-  "deepseek/deepseek-chat-v3-0324",
-  "qwen/qwen-2.5-72b-instruct",
-]);
+// const OPENROUTER_MODELS = Object.freeze([
+//   "openai/gpt-4o",
+//   "openai/gpt-4o-mini",
+//   "anthropic/claude-3.5-sonnet",
+//   "anthropic/claude-3-haiku",
+//   "google/gemini-2.0-flash-001",
+//   "google/gemini-2.5-flash-preview",
+//   "meta-llama/llama-3.1-70b-instruct",
+//   "meta-llama/llama-3.1-8b-instruct",
+//   "mistralai/mistral-large",
+//   "mistralai/mistral-small",
+//   "deepseek/deepseek-chat-v3-0324",
+//   "qwen/qwen-2.5-72b-instruct",
+// ]);
+
+// Free model for testing
+const OPENROUTER_MODELS = [
+  "openrouter/free",
+  "openrouter/free"
+]
 
 /**
  * Select two distinct random models from the pool for a match.

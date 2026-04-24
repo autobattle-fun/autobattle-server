@@ -44,7 +44,7 @@ const envSchema = z.object({
   // ── Solana & Web3 ──
   SOLANA_RPC_URL: z.string().url().default("https://api.devnet.solana.com"),
   CRANK_PRIVATE_KEY: z.string().min(1, "CRANK_PRIVATE_KEY is required"),
-  AUTO_MINT_ADDRESS: z.string().min(32).optional(),
+  AUTO_TOKEN_ADDRESS: z.string().min(32).optional(),
   SWITCHBOARD_PROGRAM_ID: z
     .string()
     .default("Aio4gaXjXzJNVLtzwtNVmSqGKpANtXhybbkhtAC94ji2"),
