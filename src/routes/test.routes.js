@@ -5,9 +5,13 @@ import {
   agentStay,
   agentHit,
   revealRiver,
-  resolveRound,
   resolveTiebreaker,
   getGameStats,
+  buildTradeTransaction,
+  getRoundMarket,
+  verifyTrade,
+  buildClaimTransaction,
+  verifyClaim,
 } from "../controllers/test.controller.js";
 
 export const testRoutes = Router();
@@ -20,7 +24,12 @@ testRoutes.get("/deal-cards/:gameId", dealCards);
 testRoutes.get("/stay/:gameId/:player", agentStay); // player = 'red' or 'blue'
 testRoutes.get("/hit/:gameId/:player", agentHit); // player = 'red' or 'blue'
 testRoutes.get("/reveal-river/:gameId", revealRiver);
-testRoutes.get("/resolve-round/:gameId", resolveRound);
 testRoutes.get("/tiebreaker/:gameId", resolveTiebreaker);
 
 testRoutes.get("/stats/:gameId", getGameStats);
+
+testRoutes.get("/markets/:gameId/round/:roundNumber", getRoundMarket);
+testRoutes.post("/build-trade", buildTradeTransaction);
+testRoutes.post("/verify-trade", verifyTrade);
+testRoutes.post("/build-claim", buildClaimTransaction);
+testRoutes.post("/verify-claim", verifyClaim);

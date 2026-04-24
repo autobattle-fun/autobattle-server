@@ -8,16 +8,7 @@
   "instructions": [
     {
       "name": "fulfill_vrf",
-      "discriminator": [
-        2,
-        152,
-        127,
-        138,
-        81,
-        199,
-        73,
-        21
-      ],
+      "discriminator": [2, 152, 127, 138, 81, 199, 73, 21],
       "accounts": [
         {
           "name": "game_state",
@@ -26,12 +17,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  97,
-                  109,
-                  101
-                ]
+                "value": [103, 97, 109, 101]
               },
               {
                 "kind": "account",
@@ -48,19 +34,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  118,
-                  114,
-                  102,
-                  95,
-                  114,
-                  101,
-                  113,
-                  117,
-                  101,
-                  115,
-                  116
-                ]
+                "value": [118, 114, 102, 95, 114, 101, 113, 117, 101, 115, 116]
               },
               {
                 "kind": "account",
@@ -83,16 +57,7 @@
     },
     {
       "name": "init_game",
-      "discriminator": [
-        251,
-        46,
-        12,
-        208,
-        184,
-        148,
-        157,
-        73
-      ],
+      "discriminator": [251, 46, 12, 208, 184, 148, 157, 73],
       "accounts": [
         {
           "name": "registry",
@@ -101,16 +66,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
+                "value": [114, 101, 103, 105, 115, 116, 114, 121]
               }
             ]
           }
@@ -142,16 +98,7 @@
     },
     {
       "name": "initialize_registry",
-      "discriminator": [
-        189,
-        181,
-        20,
-        17,
-        174,
-        57,
-        249,
-        59
-      ],
+      "discriminator": [189, 181, 20, 17, 174, 57, 249, 59],
       "accounts": [
         {
           "name": "registry",
@@ -160,16 +107,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
+                "value": [114, 101, 103, 105, 115, 116, 114, 121]
               }
             ]
           }
@@ -193,16 +131,7 @@
     },
     {
       "name": "request_vrf",
-      "discriminator": [
-        5,
-        87,
-        79,
-        152,
-        164,
-        176,
-        190,
-        226
-      ],
+      "discriminator": [5, 87, 79, 152, 164, 176, 190, 226],
       "accounts": [
         {
           "name": "game_state",
@@ -211,12 +140,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  97,
-                  109,
-                  101
-                ]
+                "value": [103, 97, 109, 101]
               },
               {
                 "kind": "account",
@@ -233,19 +157,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  118,
-                  114,
-                  102,
-                  95,
-                  114,
-                  101,
-                  113,
-                  117,
-                  101,
-                  115,
-                  116
-                ]
+                "value": [118, 114, 102, 95, 114, 101, 113, 117, 101, 115, 116]
               },
               {
                 "kind": "account",
@@ -277,16 +189,7 @@
     },
     {
       "name": "resolve_round",
-      "discriminator": [
-        165,
-        114,
-        237,
-        158,
-        1,
-        36,
-        70,
-        254
-      ],
+      "discriminator": [165, 114, 237, 158, 1, 36, 70, 254],
       "accounts": [
         {
           "name": "registry",
@@ -295,16 +198,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
+                "value": [114, 101, 103, 105, 115, 116, 114, 121]
               }
             ]
           }
@@ -316,12 +210,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  97,
-                  109,
-                  101
-                ]
+                "value": [103, 97, 109, 101]
               },
               {
                 "kind": "account",
@@ -341,16 +230,7 @@
     },
     {
       "name": "stay",
-      "discriminator": [
-        106,
-        212,
-        251,
-        226,
-        193,
-        182,
-        84,
-        78
-      ],
+      "discriminator": [106, 212, 251, 226, 193, 182, 84, 78],
       "accounts": [
         {
           "name": "game_state",
@@ -359,12 +239,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  97,
-                  109,
-                  101
-                ]
+                "value": [103, 97, 109, 101]
               },
               {
                 "kind": "account",
@@ -393,16 +268,7 @@
     },
     {
       "name": "unlock_upgrade",
-      "discriminator": [
-        79,
-        107,
-        155,
-        132,
-        11,
-        87,
-        77,
-        185
-      ],
+      "discriminator": [79, 107, 155, 132, 11, 87, 77, 185],
       "accounts": [
         {
           "name": "game_state",
@@ -411,12 +277,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  103,
-                  97,
-                  109,
-                  101
-                ]
+                "value": [103, 97, 109, 101]
               },
               {
                 "kind": "account",
@@ -436,16 +297,7 @@
     },
     {
       "name": "update_cooldown",
-      "discriminator": [
-        77,
-        108,
-        158,
-        221,
-        67,
-        31,
-        120,
-        146
-      ],
+      "discriminator": [77, 108, 158, 221, 67, 31, 120, 146],
       "accounts": [
         {
           "name": "registry",
@@ -454,16 +306,7 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  103,
-                  105,
-                  115,
-                  116,
-                  114,
-                  121
-                ]
+                "value": [114, 101, 103, 105, 115, 116, 114, 121]
               }
             ]
           }
@@ -471,9 +314,7 @@
         {
           "name": "authority",
           "signer": true,
-          "relations": [
-            "registry"
-          ]
+          "relations": ["registry"]
         }
       ],
       "args": [
@@ -487,135 +328,45 @@
   "accounts": [
     {
       "name": "GameState",
-      "discriminator": [
-        144,
-        94,
-        208,
-        172,
-        248,
-        99,
-        134,
-        120
-      ]
+      "discriminator": [144, 94, 208, 172, 248, 99, 134, 120]
     },
     {
       "name": "Registry",
-      "discriminator": [
-        47,
-        174,
-        110,
-        246,
-        184,
-        182,
-        252,
-        218
-      ]
+      "discriminator": [47, 174, 110, 246, 184, 182, 252, 218]
     },
     {
       "name": "VRFRequest",
-      "discriminator": [
-        38,
-        152,
-        86,
-        6,
-        38,
-        37,
-        34,
-        207
-      ]
+      "discriminator": [38, 152, 86, 6, 38, 37, 34, 207]
     }
   ],
   "events": [
     {
       "name": "CardsDealt",
-      "discriminator": [
-        115,
-        159,
-        224,
-        101,
-        212,
-        252,
-        148,
-        44
-      ]
+      "discriminator": [115, 159, 224, 101, 212, 252, 148, 44]
     },
     {
       "name": "GameEnded",
-      "discriminator": [
-        35,
-        93,
-        113,
-        153,
-        29,
-        144,
-        200,
-        109
-      ]
+      "discriminator": [35, 93, 113, 153, 29, 144, 200, 109]
     },
     {
       "name": "GameInitialised",
-      "discriminator": [
-        25,
-        60,
-        40,
-        175,
-        71,
-        125,
-        34,
-        175
-      ]
+      "discriminator": [25, 60, 40, 175, 71, 125, 34, 175]
     },
     {
       "name": "PlayerHit",
-      "discriminator": [
-        147,
-        28,
-        65,
-        242,
-        143,
-        216,
-        222,
-        204
-      ]
+      "discriminator": [147, 28, 65, 242, 143, 216, 222, 204]
     },
     {
       "name": "PlayerStayed",
-      "discriminator": [
-        217,
-        236,
-        233,
-        159,
-        74,
-        39,
-        219,
-        35
-      ]
+      "discriminator": [217, 236, 233, 159, 74, 39, 219, 35]
     },
     {
       "name": "RoundResolved",
-      "discriminator": [
-        204,
-        146,
-        253,
-        187,
-        8,
-        61,
-        75,
-        29
-      ]
+      "discriminator": [204, 146, 253, 187, 8, 61, 75, 29]
     },
     {
       "name": "VrfRequested",
-      "discriminator": [
-        50,
-        56,
-        125,
-        141,
-        222,
-        176,
-        113,
-        18
-      ]
+      "discriminator": [50, 56, 125, 141, 222, 176, 113, 18]
     }
   ],
   "errors": [
@@ -870,6 +621,14 @@
           },
           {
             "name": "p2_score",
+            "type": "u8"
+          },
+          {
+            "name": "p1_last_card",
+            "type": "u8"
+          },
+          {
+            "name": "p2_last_card",
             "type": "u8"
           },
           {

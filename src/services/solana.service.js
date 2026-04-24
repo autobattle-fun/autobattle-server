@@ -211,17 +211,17 @@ class SolanaService {
 
     const remainingAccounts = marketPda
       ? [
-        {
-          pubkey: new PublicKey(marketPda),
-          isWritable: true,
-          isSigner: false,
-        },
-        {
-          pubkey: PRED_MARKET_PROGRAM_ID,
-          isWritable: false,
-          isSigner: false,
-        },
-      ]
+          {
+            pubkey: new PublicKey(marketPda),
+            isWritable: true,
+            isSigner: false,
+          },
+          {
+            pubkey: PRED_MARKET_PROGRAM_ID,
+            isWritable: false,
+            isSigner: false,
+          },
+        ]
       : [];
 
     const txSig = await this.gameEngine.methods
@@ -319,10 +319,44 @@ class SolanaService {
       })
       .instruction();
 
-    const txSig = await this.provider.sendAndConfirm(
-      new anchor.web3.Transaction().add(revealIx, fillIx),
-    );
+    const tx = new anchor.web3.Transaction().add(revealIx, fillIx);
 
+    // --- MEV BOT PROTECTION: ATOMIC RESOLUTION ---
+    // If this is the Final Reveal (2) or Tiebreaker (3), immediately bundle the resolve command
+    if (rollType === 2 || rollType === 3) {
+      const [registryPda] = deriveRegistryPda();
+
+      // Fetch the current round number before the contract increments it
+      const currentState =
+        await this.gameEngine.account.gameState.fetch(gamePda);
+      const currentRound = currentState.roundNumber;
+
+      // Derive BOTH markets
+      const [roundMarketPda] = deriveMarketPda(gameId, currentRound);
+      const [mainMarketPda] = deriveMarketPda(gameId, 0);
+
+      const resolveIx = await this.gameEngine.methods
+        .resolveRound()
+        .accounts({
+          registry: registryPda,
+          gameState: gamePda,
+          crank: crank,
+        })
+        .remainingAccounts([
+          { pubkey: roundMarketPda, isWritable: true, isSigner: false }, // index 0 (Round)
+          { pubkey: mainMarketPda, isWritable: true, isSigner: false }, // index 1 (Main)
+          {
+            pubkey: PRED_MARKET_PROGRAM_ID,
+            isWritable: false,
+            isSigner: false,
+          },
+        ])
+        .instruction();
+
+      tx.add(resolveIx);
+    }
+
+    const txSig = await this.provider.sendAndConfirm(tx);
     logger.info("VRF step complete", { gameId, rollType, agentColor, txSig });
     return txSig;
   }
