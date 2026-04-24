@@ -68,12 +68,6 @@ export function initWebSocket(httpServer) {
 
 /**
  * Broadcast a game event to all connected clients.
- * If `matchId` is provided, only clients subscribed to that match
- * (or unsubscribed clients receiving all events) will get it.
- *
- * @param {string} eventType - Event name (e.g. "match:created", "round:started")
- * @param {Object} payload - Event data
- * @param {string} [matchId] - Optional match ID for targeted delivery
  */
 export function broadcast(eventType, payload, matchId) {
   if (!wss) return;
@@ -90,8 +84,10 @@ export function broadcast(eventType, payload, matchId) {
   for (const client of wss.clients) {
     if (client.readyState !== 1) continue; // WebSocket.OPEN = 1
 
-    // Send to: unsubscribed clients (global) OR clients subscribed to this match
-    const isSubscribed = !matchId || !client.subscribedMatchId || client.subscribedMatchId === matchId;
+    const isSubscribed =
+      !matchId ||
+      !client.subscribedMatchId ||
+      client.subscribedMatchId === matchId;
 
     if (isSubscribed) {
       client.send(message);
@@ -123,58 +119,74 @@ export const wsEvents = {
     );
   },
 
-  roundStarted(matchId, roundNumber, gameId) {
+  roundStarted(matchId, { roundNumber, gameId, redHp, blueHp }) {
     broadcast(
       "round:started",
-      { roundNumber, gameId },
+      { roundNumber, gameId, redHp, blueHp },
       matchId,
     );
   },
 
-  cardsDealt(matchId, { p1Score, p2Score, isFinalReveal }) {
+  cardsDealt(matchId, { redScore, blueScore, redCard, blueCard }) {
     broadcast(
       "cards:dealt",
-      { redScore: p1Score, blueScore: p2Score, isFinalReveal },
+      { redScore, blueScore, redCard, blueCard },
       matchId,
     );
   },
 
-  agentDecision(matchId, { player, action, model, score }) {
+  agentDecision(matchId, { player, action, reason, model, scoreBefore, scoreAfter, cardDealt }) {
     broadcast(
       "agent:decision",
-      { player, action, model, score },
+      { player, action, reason, model, scoreBefore, scoreAfter, cardDealt },
       matchId,
     );
   },
 
-  roundResolved(matchId, { roundNumber, redHp, blueHp, damageDealt }) {
+  riverRevealed(matchId, { redScore, blueScore, redCard, blueCard }) {
+    broadcast(
+      "river:revealed",
+      { redScore, blueScore, redCard, blueCard },
+      matchId,
+    );
+  },
+
+  roundResolved(matchId, { roundNumber, redHp, blueHp, redScore, blueScore, damageDealt, roundWinner }) {
     broadcast(
       "round:resolved",
-      { roundNumber, redHp, blueHp, damageDealt },
+      { roundNumber, redHp, blueHp, redScore, blueScore, damageDealt, roundWinner },
       matchId,
     );
   },
 
-  tiebreakerStarted(matchId, { roundNumber }) {
+  tiebreakerStarted(matchId, { roundNumber, redScore, blueScore }) {
     broadcast(
       "tiebreaker:started",
-      { roundNumber },
+      { roundNumber, redScore, blueScore },
+      matchId,
+    );
+  },
+
+  tiebreakerResolved(matchId, { redScore, blueScore, redCard, blueCard }) {
+    broadcast(
+      "tiebreaker:resolved",
+      { redScore, blueScore, redCard, blueCard },
       matchId,
     );
   },
 
   hpUpdated(matchId, { redHp, blueHp }) {
-    broadcast(
-      "hp:updated",
-      { redHp, blueHp },
-      matchId,
-    );
+    broadcast("hp:updated", { redHp, blueHp }, matchId);
   },
 
-  matchEnded(matchId, { winner, gameId, totalRounds }) {
+  gameStats(matchId, stats) {
+    broadcast("game:stats", stats, matchId);
+  },
+
+  matchEnded(matchId, { winner, gameId, totalRounds, llmRed, llmBlue }) {
     broadcast(
       "match:ended",
-      { winner, gameId, totalRounds },
+      { winner, gameId, totalRounds, llmRed, llmBlue },
       matchId,
     );
   },

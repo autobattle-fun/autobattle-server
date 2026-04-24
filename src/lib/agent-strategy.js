@@ -8,6 +8,7 @@ import { callLlmAgent, buildAgentQuery } from "./llm-client.js";
  * Each agent is backed by a randomly chosen OpenRouter model
  * that persists for the duration of the match.
  *
+ * Returns { action, reason } — the reason is persisted in the DB.
  * Falls back to a basic heuristic strategy if the LLM call fails.
  */
 
@@ -16,19 +17,7 @@ import { callLlmAgent, buildAgentQuery } from "./llm-client.js";
 /**
  * Get an LLM-powered decision for whether the agent should HIT or STAY.
  *
- * @param {Object} params
- * @param {string} params.chatId - The match UUID for LLM conversation context
- * @param {string} params.model - The OpenRouter model identifier for this agent
- * @param {string} params.player - "RED" or "BLUE"
- * @param {number} params.myScore - The agent's current blackjack score
- * @param {number} params.opponentScore - Opponent's visible score
- * @param {number} params.myHp - Agent's remaining HP
- * @param {number} params.opponentHp - Opponent's remaining HP
- * @param {number} params.roundNumber - Current round (affects damage scaling)
- * @param {boolean} params.myStayed - Whether this agent has already stayed
- * @param {boolean} params.opponentStayed - Whether the opponent has stayed
- * @param {number} params.myAces - Number of aces in this agent's hand
- * @returns {Promise<"HIT" | "STAY">} The agent's decision
+ * @returns {Promise<{action: "HIT" | "STAY", reason: string}>}
  */
 export async function decideAction({
   chatId,
@@ -42,11 +31,14 @@ export async function decideAction({
   myStayed,
   opponentStayed,
   myAces,
+  myCards,
+  opponentCards,
+  cardHistory,
 }) {
   // Hard constraint: forced stay at 21+
   if (myScore >= 21) {
     logger.info("Agent forced to STAY (score >= 21)", { player, myScore });
-    return "STAY";
+    return { action: "STAY", reason: "Score is 21 or above — forced stay" };
   }
 
   try {
@@ -60,10 +52,13 @@ export async function decideAction({
       myStayed,
       opponentStayed,
       myAces,
+      myCards,
+      opponentCards,
+      cardHistory,
     });
 
     const result = await callLlmAgent({ chatId, model, query });
-    return result.action;
+    return { action: result.action, reason: result.reason };
   } catch (error) {
     logger.error("LLM agent call failed, using fallback strategy", {
       player,
@@ -80,21 +75,32 @@ export async function decideAction({
 
 /**
  * Simple fallback strategy used when the LLM API is unavailable.
- * Uses basic blackjack probability thresholds.
+ * Returns { action, reason }.
  */
 function fallbackDecision({ myScore, opponentScore, myHp, opponentHp }) {
-  if (myScore >= 21) return "STAY";
+  if (myScore >= 21)
+    return { action: "STAY", reason: "[Fallback] Score >= 21" };
 
-  // HP-aware threshold selection
   const hpDiff = myHp - opponentHp;
-  let threshold = 15; // Balanced
+  let threshold = 15;
+  let profile = "balanced";
 
-  if (hpDiff >= 4) threshold = 17; // Conservative (healthy lead)
-  if (hpDiff <= -4) threshold = 13; // Aggressive (behind)
+  if (hpDiff >= 4) {
+    threshold = 17;
+    profile = "conservative";
+  }
+  if (hpDiff <= -4) {
+    threshold = 13;
+    profile = "aggressive";
+  }
 
-  if (myScore < threshold) return "HIT";
+  if (myScore < threshold) {
+    return {
+      action: "HIT",
+      reason: `[Fallback] Score ${myScore} < threshold ${threshold} (${profile})`,
+    };
+  }
 
-  // If opponent is closer to 21 and bust risk is acceptable
   const myDist = Math.abs(21 - myScore);
   const oppDist = Math.abs(21 - opponentScore);
   const maxSafe = 21 - myScore;
@@ -102,7 +108,15 @@ function fallbackDecision({ myScore, opponentScore, myHp, opponentHp }) {
     [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10].filter((v) => v > maxSafe)
       .length / 13;
 
-  if (oppDist < myDist && bustProb < 0.5) return "HIT";
+  if (oppDist < myDist && bustProb < 0.5) {
+    return {
+      action: "HIT",
+      reason: `[Fallback] Opponent closer to 21, bust risk ${Math.round(bustProb * 100)}% acceptable`,
+    };
+  }
 
-  return "STAY";
+  return {
+    action: "STAY",
+    reason: `[Fallback] Score ${myScore} >= threshold ${threshold}, bust risk ${Math.round(bustProb * 100)}%`,
+  };
 }

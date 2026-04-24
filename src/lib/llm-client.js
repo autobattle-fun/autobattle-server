@@ -40,12 +40,12 @@ const SYSTEM_PROMPT = `You are a competitive blackjack AI agent playing in a pre
 
 GAME RULES:
 - Both players start with 10 HP.
-- Each round, cards are dealt. Your goal is to get closer to 21 than your opponent.
-- Cards 2-10 are face value. Jack, Queen, King = 10. Ace = 11 (auto-downgrades to 1 if your score exceeds 21).
+- Each round, 1 card is dealt to each player face-up. Then each player can HIT (draw more cards) or STAY.
+- Cards 2-10 are face value. Jack, Queen, King = 10. Ace = 11 (auto-downgrades to 1 if total exceeds 21).
 - You can HIT (draw another card) or STAY (lock your hand).
 - If your score reaches 21 or higher, you are forced to STAY.
-- After both players lock in, a final "river card" is dealt to both — this can flip everything.
-- The player further from 21 takes damage. Damage doubles each round (Round 1 = 1 dmg, Round 2 = 2 dmg, Round 3 = 4 dmg...).
+- After both players lock in, a final "river card" is dealt to both simultaneously — this can flip everything.
+- The player further from 21 (by absolute distance) takes damage. Damage doubles each round (Round 1 = 1 dmg, Round 2 = 2 dmg, Round 3 = 4 dmg...).
 - Ties trigger sudden death: both get extra cards until someone is closer to 21.
 - The match ends when a player reaches 0 HP.
 
@@ -55,15 +55,19 @@ STRATEGY CONSIDERATIONS:
 - Scores 18-20 are strong hands — usually STAY unless desperate.
 - Consider the opponent's visible score. If they're already closer to 21, you may need to risk a HIT.
 - Consider HP differential: if you're ahead on HP, play conservatively; if behind, take risks.
-- Remember the river card: even if you stay at 18, the river card will add to your score.
+- Remember: a final river card will be dealt AFTER you stay, adding to your score.
+- Going over 21 is not instant death — you just need to be CLOSER to 21 than your opponent.
 
-You MUST respond with ONLY a valid JSON object. No explanation, no markdown, no extra text:
-{"action": "HIT"} or {"action": "STAY"}`;
+You MUST respond with ONLY a valid JSON object containing your action and your reasoning. No explanation outside the JSON, no markdown:
+{"action": "HIT", "reason": "My score is 14 and opponent has 18. I need to get closer to 21."}
+or
+{"action": "STAY", "reason": "My score is 19, bust risk is too high at 69%. The river card is a gamble either way."}`;
 
 // ── Query Builder ───────────────────────────────────────────────────
 
 /**
- * Build the query string sent to the LLM with full match context.
+ * Build the query string sent to the LLM with full match context,
+ * including card history from previous rounds and current round.
  */
 export function buildAgentQuery({
   player,
@@ -75,19 +79,36 @@ export function buildAgentQuery({
   myStayed,
   opponentStayed,
   myAces,
+  myCards,
+  opponentCards,
+  cardHistory,
 }) {
   const damageTier = Math.pow(2, roundNumber - 1);
+  const myCardLabels =
+    myCards?.length > 0
+      ? myCards.map((c) => c.label).join(", ")
+      : "None yet";
+  const oppCardLabels =
+    opponentCards?.length > 0
+      ? opponentCards.map((c) => c.label).join(", ")
+      : "None yet";
 
-  return `CURRENT MATCH STATE:
+  let query = `${SYSTEM_PROMPT}
+
+---
+
+CURRENT MATCH STATE:
 You are the ${player} agent.
 Round: ${roundNumber} (Damage this round: ${damageTier} HP)
 
 YOUR HAND:
+- Cards: [${myCardLabels}]
 - Score: ${myScore}
 - Aces in hand: ${myAces}
 - Status: ${myStayed ? "STAYED (locked)" : "ACTIVE — your turn to decide"}
 
 OPPONENT'S HAND:
+- Cards: [${oppCardLabels}]
 - Score: ${opponentScore}
 - Status: ${opponentStayed ? "STAYED (locked)" : "Still deciding"}
 
@@ -98,15 +119,20 @@ HP STATUS:
 ANALYSIS:
 - Distance from 21: You = ${Math.abs(21 - myScore)}, Opponent = ${Math.abs(21 - opponentScore)}
 - ${myScore > opponentScore ? "You are currently AHEAD" : myScore < opponentScore ? "You are currently BEHIND" : "You are currently TIED"}
-- Bust probability if you HIT: ~${getBustProbDescription(myScore)}
+- Bust probability if you HIT: ~${getBustProbDescription(myScore)}`;
 
-What is your decision? Respond with ONLY: {"action": "HIT"} or {"action": "STAY"}`;
+  if (cardHistory) {
+    query += `\n\n${cardHistory}`;
+  }
+
+  query += `\n\nWhat is your decision? Respond with ONLY valid JSON: {"action": "HIT"|"STAY", "reason": "your reasoning"}`;
+
+  return query;
 }
 
 function getBustProbDescription(score) {
   if (score >= 21) return "100% (forced stay)";
   const maxSafe = 21 - score;
-  // Cards that bust: values > maxSafe out of [1,2,3,4,5,6,7,8,9,10,10,10,10]
   const bustCount = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10].filter(
     (v) => v > maxSafe,
   ).length;
@@ -122,7 +148,7 @@ function getBustProbDescription(score) {
  * @param {string} params.chatId - The match UUID (used as conversation context)
  * @param {string} params.model - OpenRouter model identifier
  * @param {string} params.query - The full query text
- * @returns {Promise<{action: "HIT" | "STAY"}>} Parsed decision
+ * @returns {Promise<{action: "HIT" | "STAY", reason: string}>} Parsed decision
  */
 export async function callLlmAgent({ chatId, model, query }) {
   const endpoint = `${env.LLM_API_ENDPOINT}?chatId=${encodeURIComponent(chatId)}`;
@@ -153,7 +179,7 @@ export async function callLlmAgent({ chatId, model, query }) {
       chatId,
       model,
     });
-    return { action: "STAY" };
+    return { action: "STAY", reason: "LLM returned empty response" };
   }
 
   // Parse JSON with repair
@@ -161,10 +187,11 @@ export async function callLlmAgent({ chatId, model, query }) {
     const repaired = jsonrepair(textOutput);
     const parsed = JSON.parse(repaired);
     const action = parsed?.action?.toUpperCase?.();
+    const reason = parsed?.reason || "No reason provided";
 
     if (action === "HIT" || action === "STAY") {
-      logger.info("LLM decision", { chatId, model, action });
-      return { action };
+      logger.info("LLM decision", { chatId, model, action, reason });
+      return { action, reason };
     }
 
     logger.warn("LLM returned invalid action, defaulting to STAY", {
@@ -172,7 +199,7 @@ export async function callLlmAgent({ chatId, model, query }) {
       model,
       rawAction: parsed?.action,
     });
-    return { action: "STAY" };
+    return { action: "STAY", reason: `Invalid LLM action: ${parsed?.action}` };
   } catch (parseError) {
     logger.warn("LLM JSON parse failed, defaulting to STAY", {
       chatId,
@@ -180,7 +207,7 @@ export async function callLlmAgent({ chatId, model, query }) {
       rawText: textOutput.slice(0, 200),
       error: parseError.message,
     });
-    return { action: "STAY" };
+    return { action: "STAY", reason: "Failed to parse LLM response" };
   }
 }
 

@@ -42,6 +42,62 @@ model Match {
   updatedAt DateTime @updatedAt
 
   markets Market[] // One-to-many relationship for micro-markets
+  rounds  MatchRound[] // Per-round logs
+}
+
+// ── Round & Move Logging ──────────────────────────────────────────
+
+model MatchRound {
+  id      String @id @default(cuid())
+  matchId String
+  match   Match  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  roundNumber  Int
+  phase        String // Final phase after resolution (e.g. "ENDED", "AWAITING_INITIAL_DEAL")
+  redScoreInit Int // Red score after initial deal
+  blueScoreInit Int // Blue score after initial deal
+  redScoreFinal Int // Red score after river
+  blueScoreFinal Int // Blue score after river
+  redHpBefore  Int
+  blueHpBefore Int
+  redHpAfter   Int
+  blueHpAfter  Int
+  damageDealt  Int
+  roundWinner  String? // "RED", "BLUE", or null (tiebreaker ongoing)
+
+  // Card tracking — stored as JSON arrays: [{ value: 10, label: "K" }, ...]
+  redCardsDealt  Json @default("[]")
+  blueCardsDealt Json @default("[]")
+  riverRedCard   Json? // Single card object
+  riverBlueCard  Json? // Single card object
+  tiebreakerCards Json @default("[]") // Array of tiebreaker card pairs
+
+  createdAt DateTime @default(now())
+
+  moves RoundMove[]
+
+  @@unique([matchId, roundNumber])
+  @@index([matchId])
+}
+
+model RoundMove {
+  id      String @id @default(cuid())
+  roundId String
+  round   MatchRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+
+  moveNumber Int // Order of move within the round (1, 2, 3...)
+  player     String // "RED" or "BLUE"
+  action     String // "HIT", "STAY", "FORCED_STAY"
+  reason     String? // LLM's reasoning for the decision
+  model      String // OpenRouter model identifier used
+  scoreBefore Int // Score before this move
+  scoreAfter  Int // Score after this move (same for STAY)
+  cardDealt   Json? // The card dealt on HIT: { value: 10, label: "K" }
+  txSignature String? // On-chain transaction signature
+
+  createdAt DateTime @default(now())
+
+  @@index([roundId])
 }
 
 model Market {

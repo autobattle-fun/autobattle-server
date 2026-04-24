@@ -6,336 +6,315 @@ import { decideAction } from "../lib/agent-strategy.js";
 import { selectMatchModels } from "../lib/llm-client.js";
 import { wsEvents } from "../lib/websocket.js";
 import {
-  deriveGamePda,
-  deriveMarketPda,
-  deriveVaultPda,
-  parseGamePhase,
-  parseColor,
+  initGameState, getGameState, syncOnChainState,
+  recordCardDealt, recordRiverCards, recordTiebreakerCards,
+  recordMove, archiveRound, deleteGameState,
+  inferCard, formatCardHistory,
+} from "../lib/game-state-store.js";
+import {
+  deriveGamePda, deriveMarketPda, deriveVaultPda,
+  parseGamePhase, parseColor,
 } from "../utils/solana.helpers.js";
 
 // ── Match Lifecycle ─────────────────────────────────────────────────
 
-/**
- * Start a brand new match:
- *  1. Generate a UUID for LLM chat context
- *  2. Select two random OpenRouter LLMs (one per agent)
- *  3. Fetch next game ID from on-chain registry
- *  4. Init game on-chain with separate agent wallets
- *  5. Create on-chain prediction market
- *  6. Persist Match + Market records in Prisma
- *  7. Broadcast match:created via WebSocket
- */
 export async function startMatch() {
-  // 1. Generate match UUID for LLM conversations
   const matchUuid = crypto.randomUUID();
-
-  // 2. Select random LLMs for this match
   const { redModel, blueModel } = selectMatchModels();
-
-  // 3. Agent wallet public keys (from env-configured keypairs)
   const redAgent = solanaService.agentRedKeypair.publicKey.toBase58();
   const blueAgent = solanaService.agentBlueKeypair.publicKey.toBase58();
-
-  // 4. Get next game ID
   const gameId = await solanaService.getNextGameId();
-
-  // 5. Derive PDAs
   const [gamePda] = deriveGamePda(gameId);
   const [marketPda] = deriveMarketPda(gameId, 0);
   const [vaultPda] = deriveVaultPda(gameId, 0);
 
-  logger.info("Starting match", {
-    gameId,
-    matchUuid,
-    llmRed: redModel,
-    llmBlue: blueModel,
-    redAgent,
-    blueAgent,
-  });
+  logger.info("Starting match", { gameId, matchUuid, llmRed: redModel, llmBlue: blueModel });
 
-  // 6. Init game on-chain
   await solanaService.initGame(gameId, redAgent, blueAgent);
 
-  // 7. Create market on-chain (100 year expiry — permanent polymarket mode)
   const closesAtUnix = Math.floor(Date.now() / 1000) + 3_153_600_000;
   const question = `Will Red Win Match #${gameId}?`;
   await solanaService.createOnChainMarket(gameId, 0, question, closesAtUnix);
 
-  // 8. Persist to database
   const result = await prisma.$transaction(async (tx) => {
     const match = await tx.match.create({
       data: {
-        gameId,
-        gamePda: gamePda.toBase58(),
-        matchUuid,
-        agentRed: redAgent,
-        agentBlue: blueAgent,
-        llmRed: redModel,
-        llmBlue: blueModel,
-        status: "PENDING",
+        gameId, gamePda: gamePda.toBase58(), matchUuid,
+        agentRed: redAgent, agentBlue: blueAgent,
+        llmRed: redModel, llmBlue: blueModel, status: "PENDING",
       },
     });
-
     const market = await tx.market.create({
       data: {
         slug: `match-${gameId}-main`,
         title: `Match #${gameId}: ${redModel.split("/").pop()} vs ${blueModel.split("/").pop()}`,
         description: `${redModel} (Red) vs ${blueModel} (Blue) — Main prediction market.`,
-        matchId: match.id,
-        marketPda: marketPda.toBase58(),
-        vaultPda: vaultPda.toBase58(),
-        marketIndex: 0,
-        marketType: "MAIN",
-        status: "OPEN",
+        matchId: match.id, marketPda: marketPda.toBase58(), vaultPda: vaultPda.toBase58(),
+        marketIndex: 0, marketType: "MAIN", status: "OPEN",
         closesAt: new Date(closesAtUnix * 1000),
       },
     });
-
     return { match, market };
   });
 
-  // 9. Broadcast via WebSocket
+  await initGameState({ gameId, matchId: result.match.id, matchUuid });
   wsEvents.matchCreated(result.match);
-
-  logger.info("Match started", {
-    matchId: result.match.id,
-    gameId,
-    llmRed: redModel,
-    llmBlue: blueModel,
-  });
+  logger.info("Match started", { matchId: result.match.id, gameId });
   return result;
 }
 
-// ── Round Orchestration ─────────────────────────────────────────────
+// ── Round Orchestration (Discrete Steps) ────────────────────────────
 
-/**
- * Play a single round for a match. This drives the complete round loop:
- *  1. Initial deal (VRF type 0)
- *  2. LLM agent decisions (strategic hits/stays)
- *  3. River card (VRF type 2)
- *  4. Resolve round
- *  5. Handle tiebreaker if needed
- *  6. Sync state to Prisma
- *  7. Broadcast updates via WebSocket
- *
- * Returns the updated game state.
- */
 export async function playRound(matchId) {
   const match = await prisma.match.findUnique({
     where: { id: matchId },
     include: { markets: { where: { marketIndex: 0 } } },
   });
-
-  if (!match) {
-    const error = new Error("Match not found");
-    error.statusCode = 404;
-    throw error;
-  }
-
-  if (match.status === "RESOLVED") {
-    const error = new Error("Match already resolved");
-    error.statusCode = 400;
-    throw error;
-  }
+  if (!match) { const e = new Error("Match not found"); e.statusCode = 404; throw e; }
+  if (match.status === "RESOLVED") { const e = new Error("Match already resolved"); e.statusCode = 400; throw e; }
 
   const { gameId, matchUuid, llmRed, llmBlue } = match;
   const marketPda = match.markets[0]?.marketPda;
+  const redHpBefore = match.redHp;
+  const blueHpBefore = match.blueHp;
 
   logger.info("Playing round", { matchId, gameId, round: match.roundNumber });
+  wsEvents.roundStarted(matchId, { roundNumber: match.roundNumber, gameId, redHp: match.redHp, blueHp: match.blueHp });
 
-  // Broadcast round start
-  wsEvents.roundStarted(matchId, match.roundNumber, gameId);
-
-  // Activate match if still pending
   if (match.status === "PENDING") {
-    await prisma.match.update({
-      where: { id: matchId },
-      data: { status: "ACTIVE" },
-    });
+    await prisma.match.update({ where: { id: matchId }, data: { status: "ACTIVE" } });
   }
 
-  // 1. Initial Deal
+  // Step 1: Deal initial cards
   await solanaService.vrfStep(gameId, ROLL_TYPE.INITIAL_DEAL);
+  let gs = await solanaService.fetchGameState(gameId);
+  let state = await getGameState(gameId);
+  if (!state) state = await initGameState({ gameId, matchId, matchUuid });
 
-  // Fetch state after deal and broadcast
-  let gameState = await solanaService.fetchGameState(gameId);
+  // Infer initial cards from scores (each player gets 1 card)
+  const redInitCard = inferCard(0, gs.p1Score, 0, gs.p1Aces);
+  const blueInitCard = inferCard(0, gs.p2Score, 0, gs.p2Aces);
+  await recordCardDealt(gameId, "RED", redInitCard);
+  await recordCardDealt(gameId, "BLUE", blueInitCard);
+  await syncOnChainState(gameId, gs, parseGamePhase(gs.phase));
+
+  const redScoreInit = gs.p1Score;
+  const blueScoreInit = gs.p2Score;
+
   wsEvents.cardsDealt(matchId, {
-    p1Score: gameState.p1Score,
-    p2Score: gameState.p2Score,
-    isFinalReveal: false,
+    redScore: gs.p1Score, blueScore: gs.p2Score,
+    redCard: redInitCard, blueCard: blueInitCard,
   });
+  wsEvents.gameStats(matchId, await buildStats(gameId, gs));
 
-  // 2. LLM Agent Decisions — strategic hit/stay loop
-  await runAgentTurns(gameId, gameState, match);
+  // Step 2: Agent turns (LLM-driven hit/stay)
+  await runAgentTurns(gameId, gs, match);
+  gs = await solanaService.fetchGameState(gameId);
+  await syncOnChainState(gameId, gs, parseGamePhase(gs.phase));
 
-  // 3. River Card (Final Reveal)
+  // Step 3: River card
+  const preRiverRedScore = gs.p1Score;
+  const preRiverBlueScore = gs.p2Score;
+  const preRiverRedAces = gs.p1Aces;
+  const preRiverBlueAces = gs.p2Aces;
+
   await solanaService.vrfStep(gameId, ROLL_TYPE.FINAL_REVEAL);
+  gs = await solanaService.fetchGameState(gameId);
 
-  // Fetch state after river and broadcast
-  gameState = await solanaService.fetchGameState(gameId);
-  wsEvents.cardsDealt(matchId, {
-    p1Score: gameState.p1Score,
-    p2Score: gameState.p2Score,
-    isFinalReveal: true,
+  const riverRedCard = inferCard(preRiverRedScore, gs.p1Score, preRiverRedAces, gs.p1Aces);
+  const riverBlueCard = inferCard(preRiverBlueScore, gs.p2Score, preRiverBlueAces, gs.p2Aces);
+  await recordRiverCards(gameId, riverRedCard, riverBlueCard);
+  await syncOnChainState(gameId, gs, parseGamePhase(gs.phase));
+
+  wsEvents.riverRevealed(matchId, {
+    redScore: gs.p1Score, blueScore: gs.p2Score,
+    redCard: riverRedCard, blueCard: riverBlueCard,
   });
 
-  // 4. Resolve Round
+  // Step 4: Resolve round
   try {
     await solanaService.resolveRound(gameId, marketPda);
   } catch (error) {
-    if (!error.logs?.some((l) => l.includes("MarketAlreadyResolved"))) {
-      throw error;
-    }
-    logger.warn("Market already resolved, continuing", { gameId });
+    if (!error.message?.includes("MarketAlreadyResolved") && !error.message?.includes("GameAlreadyEnded")) throw error;
+    logger.warn("Market/game already resolved, continuing", { gameId });
   }
 
-  // 5. Check for tiebreaker
-  gameState = await solanaService.fetchGameState(gameId);
-  let phase = parseGamePhase(gameState.phase);
+  gs = await solanaService.fetchGameState(gameId);
+  let phase = parseGamePhase(gs.phase);
+  await syncOnChainState(gameId, gs, phase);
 
+  // Step 5: Tiebreaker loop
   while (phase === "AWAITING_TIEBREAKER_VRF") {
     logger.info("Tiebreaker — sudden death", { gameId });
-    wsEvents.tiebreakerStarted(matchId, {
-      roundNumber: gameState.roundNumber,
-    });
+    wsEvents.tiebreakerStarted(matchId, { roundNumber: gs.roundNumber, redScore: gs.p1Score, blueScore: gs.p2Score });
+
+    const preTbRedScore = gs.p1Score; const preTbBlueScore = gs.p2Score;
+    const preTbRedAces = gs.p1Aces; const preTbBlueAces = gs.p2Aces;
 
     await solanaService.vrfStep(gameId, ROLL_TYPE.TIEBREAKER);
+    gs = await solanaService.fetchGameState(gameId);
+
+    const tbRedCard = inferCard(preTbRedScore, gs.p1Score, preTbRedAces, gs.p1Aces);
+    const tbBlueCard = inferCard(preTbBlueScore, gs.p2Score, preTbBlueAces, gs.p2Aces);
+    await recordTiebreakerCards(gameId, tbRedCard, tbBlueCard);
+
+    wsEvents.tiebreakerResolved(matchId, {
+      redScore: gs.p1Score, blueScore: gs.p2Score,
+      redCard: tbRedCard, blueCard: tbBlueCard,
+    });
 
     try {
       await solanaService.resolveRound(gameId, marketPda);
     } catch (error) {
-      if (!error.logs?.some((l) => l.includes("MarketAlreadyResolved"))) {
-        throw error;
-      }
+      if (!error.message?.includes("MarketAlreadyResolved") && !error.message?.includes("GameAlreadyEnded")) throw error;
     }
 
-    gameState = await solanaService.fetchGameState(gameId);
-    phase = parseGamePhase(gameState.phase);
+    gs = await solanaService.fetchGameState(gameId);
+    phase = parseGamePhase(gs.phase);
+    await syncOnChainState(gameId, gs, phase);
   }
 
-  // 6. Sync state to Prisma
-  const updatedMatch = await syncMatchState(match, gameState);
+  // Step 6: Determine round winner and damage
+  const damageDealt = Math.pow(2, match.roundNumber - 1);
+  let roundWinner = null;
+  if (gs.p1Hp < redHpBefore) roundWinner = "BLUE";
+  else if (gs.p2Hp < blueHpBefore) roundWinner = "RED";
 
-  // 7. Broadcast HP update
-  wsEvents.hpUpdated(matchId, {
-    redHp: gameState.p1Hp,
-    blueHp: gameState.p2Hp,
+  // Step 7: Persist round log to Prisma
+  state = await getGameState(gameId);
+  const roundLog = await prisma.matchRound.create({
+    data: {
+      matchId, roundNumber: match.roundNumber, phase,
+      redScoreInit, blueScoreInit,
+      redScoreFinal: gs.p1Score, blueScoreFinal: gs.p2Score,
+      redHpBefore, blueHpBefore, redHpAfter: gs.p1Hp, blueHpAfter: gs.p2Hp,
+      damageDealt, roundWinner,
+      redCardsDealt: state?.red?.cards || [],
+      blueCardsDealt: state?.blue?.cards || [],
+      riverRedCard: riverRedCard, riverBlueCard: riverBlueCard,
+      tiebreakerCards: state?.tiebreakerCards || [],
+    },
   });
 
-  // 8. Broadcast round resolved
-  wsEvents.roundResolved(matchId, {
-    roundNumber: gameState.roundNumber,
-    redHp: gameState.p1Hp,
-    blueHp: gameState.p2Hp,
-    damageDealt: Math.pow(2, match.roundNumber - 1),
-  });
-
-  const serialized = serializeGameState(gameState);
-
-  // 9. If match ended, broadcast
-  if (updatedMatch.status === "RESOLVED") {
-    wsEvents.matchEnded(matchId, {
-      winner: serialized.winner,
-      gameId,
-      totalRounds: gameState.roundNumber,
+  // Persist individual moves
+  if (state?.moves?.length > 0) {
+    await prisma.roundMove.createMany({
+      data: state.moves.map((m) => ({ roundId: roundLog.id, ...m })),
     });
   }
 
-  return {
-    match: updatedMatch,
-    gameState: serialized,
-  };
-}
+  // Archive round in Redis
+  await archiveRound(gameId, {
+    roundNumber: match.roundNumber,
+    redCards: state?.red?.cards || [], blueCards: state?.blue?.cards || [],
+    redScoreFinal: gs.p1Score, blueScoreFinal: gs.p2Score,
+    winner: roundWinner,
+  });
 
-/**
- * Run agent turns (hit/stay) for both Red and Blue.
- * Each agent is powered by an LLM that evaluates the hand.
- */
-async function runAgentTurns(gameId, initialGameState, match) {
-  let gameState = initialGameState;
+  // Step 8: Sync match state to Prisma
+  const updatedMatch = await syncMatchState(match, gs);
 
-  // Red goes first
-  if (!gameState.p1Stayed) {
-    await runSingleAgentTurn(gameId, "RED", gameState, match);
-    gameState = await solanaService.fetchGameState(gameId);
+  wsEvents.hpUpdated(matchId, { redHp: gs.p1Hp, blueHp: gs.p2Hp });
+  wsEvents.roundResolved(matchId, {
+    roundNumber: match.roundNumber, redHp: gs.p1Hp, blueHp: gs.p2Hp,
+    redScore: gs.p1Score, blueScore: gs.p2Score, damageDealt, roundWinner,
+  });
+  wsEvents.gameStats(matchId, await buildStats(gameId, gs));
+
+  if (updatedMatch.status === "RESOLVED") {
+    wsEvents.matchEnded(matchId, {
+      winner: updatedMatch.winner, gameId,
+      totalRounds: gs.roundNumber, llmRed, llmBlue,
+    });
+    await deleteGameState(gameId);
   }
 
-  // Then Blue
-  if (!gameState.p2Stayed) {
-    await runSingleAgentTurn(gameId, "BLUE", gameState, match);
+  return { match: updatedMatch, gameState: serializeGameState(gs) };
+}
+
+// ── Agent Turns ─────────────────────────────────────────────────────
+
+async function runAgentTurns(gameId, initialGs, match) {
+  let gs = initialGs;
+  if (!gs.p1Stayed) {
+    await runSingleAgentTurn(gameId, "RED", gs, match);
+    gs = await solanaService.fetchGameState(gameId);
+  }
+  if (!gs.p2Stayed) {
+    await runSingleAgentTurn(gameId, "BLUE", gs, match);
   }
 }
 
-/**
- * Run a single agent's turn — loop hit/stay until the agent stays
- * or is forced to stay (score >= 21).
- *
- * The decision is made by the LLM assigned to this agent.
- */
-async function runSingleAgentTurn(gameId, player, gameState, match) {
+async function runSingleAgentTurn(gameId, player, gs, match) {
   const isRed = player === "RED";
   const model = isRed ? match.llmRed : match.llmBlue;
 
-  let myScore = isRed ? gameState.p1Score : gameState.p2Score;
-  let opponentScore = isRed ? gameState.p2Score : gameState.p1Score;
-  let myStayed = isRed ? gameState.p1Stayed : gameState.p2Stayed;
-  let opponentStayed = isRed ? gameState.p2Stayed : gameState.p1Stayed;
-  let myAces = isRed ? gameState.p1Aces : gameState.p2Aces;
-
+  let myScore = isRed ? gs.p1Score : gs.p2Score;
+  let oppScore = isRed ? gs.p2Score : gs.p1Score;
+  let myStayed = isRed ? gs.p1Stayed : gs.p2Stayed;
+  let oppStayed = isRed ? gs.p2Stayed : gs.p1Stayed;
+  let myAces = isRed ? gs.p1Aces : gs.p2Aces;
   const myHp = isRed ? match.redHp : match.blueHp;
-  const opponentHp = isRed ? match.blueHp : match.redHp;
-  const roundNumber = match.roundNumber;
+  const oppHp = isRed ? match.blueHp : match.redHp;
 
   while (!myStayed) {
-    // Call LLM for decision
-    const decision = await decideAction({
-      chatId: match.matchUuid,
-      model,
-      player,
-      myScore,
-      opponentScore,
-      myHp,
-      opponentHp,
-      roundNumber,
-      myStayed,
-      opponentStayed,
-      myAces,
+    const state = await getGameState(gameId);
+    const myCards = isRed ? state?.red?.cards : state?.blue?.cards;
+    const oppCards = isRed ? state?.blue?.cards : state?.red?.cards;
+    const cardHistory = state ? formatCardHistory(state) : "";
+
+    const { action, reason } = await decideAction({
+      chatId: match.matchUuid, model, player, myScore, opponentScore: oppScore,
+      myHp, opponentHp: oppHp, roundNumber: match.roundNumber,
+      myStayed, opponentStayed: oppStayed, myAces, myCards, opponentCards: oppCards, cardHistory,
     });
 
-    // Broadcast the agent's decision
-    wsEvents.agentDecision(match.id, {
-      player,
-      action: decision,
-      model,
-      score: myScore,
-    });
+    const scoreBefore = myScore;
 
-    if (decision === "HIT") {
-      // Request VRF for hit — signed by the agent's keypair
-      await solanaService.vrfStep(gameId, ROLL_TYPE.HIT, player);
+    if (action === "HIT") {
+      const txSig = await solanaService.vrfStep(gameId, ROLL_TYPE.HIT, player);
+      const updated = await solanaService.fetchGameState(gameId);
 
-      // Re-fetch to see updated score
-      const updatedState = await solanaService.fetchGameState(gameId);
-      myScore = isRed ? updatedState.p1Score : updatedState.p2Score;
-      opponentScore = isRed ? updatedState.p2Score : updatedState.p1Score;
-      myStayed = isRed ? updatedState.p1Stayed : updatedState.p2Stayed;
-      opponentStayed = isRed ? updatedState.p2Stayed : updatedState.p1Stayed;
-      myAces = isRed ? updatedState.p1Aces : updatedState.p2Aces;
+      const newScore = isRed ? updated.p1Score : updated.p2Score;
+      const newAces = isRed ? updated.p1Aces : updated.p2Aces;
+      const card = inferCard(myScore, newScore, myAces, newAces);
+      await recordCardDealt(gameId, player, card);
 
-      // Contract may have forced a stay if score >= 21
+      await recordMove(gameId, {
+        player, action: "HIT", reason, model, scoreBefore, scoreAfter: newScore,
+        cardDealt: card, txSignature: txSig,
+      });
+
+      wsEvents.agentDecision(match.id, {
+        player, action: "HIT", reason, model, scoreBefore, scoreAfter: newScore, cardDealt: card,
+      });
+
+      myScore = newScore;
+      myAces = newAces;
+      oppScore = isRed ? updated.p2Score : updated.p1Score;
+      myStayed = isRed ? updated.p1Stayed : updated.p2Stayed;
+      oppStayed = isRed ? updated.p2Stayed : updated.p1Stayed;
+
       if (myStayed) {
-        logger.info("Agent force-stayed by contract", { player, myScore });
+        await recordMove(gameId, {
+          player, action: "FORCED_STAY", reason: "Score >= 21, forced by contract",
+          model, scoreBefore: newScore, scoreAfter: newScore, cardDealt: null, txSignature: null,
+        });
         wsEvents.agentDecision(match.id, {
-          player,
-          action: "FORCED_STAY",
-          model,
-          score: myScore,
+          player, action: "FORCED_STAY", reason: "Score >= 21", model, scoreBefore: newScore, scoreAfter: newScore, cardDealt: null,
         });
         return;
       }
+      await syncOnChainState(gameId, updated, parseGamePhase(updated.phase));
     } else {
-      // Stay — signed by the agent's keypair
-      await solanaService.stay(gameId, player);
+      const txSig = await solanaService.stay(gameId, player);
+      await recordMove(gameId, {
+        player, action: "STAY", reason, model, scoreBefore, scoreAfter: scoreBefore,
+        cardDealt: null, txSignature: txSig,
+      });
+      wsEvents.agentDecision(match.id, {
+        player, action: "STAY", reason, model, scoreBefore, scoreAfter: scoreBefore, cardDealt: null,
+      });
       return;
     }
   }
@@ -343,181 +322,109 @@ async function runSingleAgentTurn(gameId, player, gameState, match) {
 
 // ── Match State Sync ────────────────────────────────────────────────
 
-/**
- * Synchronize on-chain GameState back to the Prisma Match record.
- */
-async function syncMatchState(match, gameState) {
-  const phase = parseGamePhase(gameState.phase);
+async function syncMatchState(match, gs) {
+  const phase = parseGamePhase(gs.phase);
   const isEnded = phase === "ENDED";
-  const winner = isEnded ? parseColor(gameState.winner) : null;
-
-  const updateData = {
-    redHp: gameState.p1Hp,
-    blueHp: gameState.p2Hp,
-    roundNumber: gameState.roundNumber,
-    status: isEnded ? "RESOLVED" : "ACTIVE",
-    winner: winner || undefined,
-  };
+  const winner = isEnded ? (gs.p1Hp === 0 ? "BLUE" : "RED") : null;
 
   const updatedMatch = await prisma.match.update({
     where: { id: match.id },
-    data: updateData,
+    data: {
+      redHp: gs.p1Hp, blueHp: gs.p2Hp, roundNumber: gs.roundNumber,
+      status: isEnded ? "RESOLVED" : "ACTIVE",
+      winner: winner || undefined,
+    },
   });
 
-  // If game ended, sync market resolution
   if (isEnded) {
     const winningOutcome = winner === "RED" ? "YES" : "NO";
-
     await prisma.market.updateMany({
       where: { matchId: match.id, marketType: "MAIN" },
-      data: {
-        status: "RESOLVED",
-        winningOutcome,
-        resolvesAt: new Date(),
-      },
+      data: { status: "RESOLVED", winningOutcome, resolvesAt: new Date() },
     });
-
-    logger.info("Match ended", {
-      matchId: match.id,
-      gameId: match.gameId,
-      winner,
-      llmRed: match.llmRed,
-      llmBlue: match.llmBlue,
-    });
+    logger.info("Match ended", { matchId: match.id, gameId: match.gameId, winner });
   }
-
   return updatedMatch;
 }
 
 // ── Multi-Round Automation ──────────────────────────────────────────
 
-/**
- * Play multiple rounds until the match ends or the round limit is hit.
- *
- * @param {string} matchId - Prisma match ID
- * @param {number} maxRounds - Maximum rounds to play (safety limit)
- * @returns {Object} Final match state and game state
- */
 export async function playUntilResolved(matchId, maxRounds = 10) {
   let roundsPlayed = 0;
   let result;
-
   while (roundsPlayed < maxRounds) {
     result = await playRound(matchId);
     roundsPlayed++;
-
-    if (result.match.status === "RESOLVED") {
-      logger.info("Match resolved", {
-        matchId,
-        roundsPlayed,
-        winner: result.gameState.winner,
-      });
-      break;
-    }
+    if (result.match.status === "RESOLVED") break;
   }
-
   return { ...result, roundsPlayed };
 }
 
 // ── Query Functions ─────────────────────────────────────────────────
 
-/**
- * Get match details with markets included.
- */
 export async function getMatchState(matchId) {
   const match = await prisma.match.findUnique({
-    where: { id: matchId },
-    include: {
-      markets: true,
-    },
+    where: { id: matchId }, include: { markets: true, rounds: { include: { moves: true }, orderBy: { roundNumber: "asc" } } },
   });
+  if (!match) { const e = new Error("Match not found"); e.statusCode = 404; throw e; }
 
-  if (!match) {
-    const error = new Error("Match not found");
-    error.statusCode = 404;
-    throw error;
-  }
-
-  // Optionally hydrate with on-chain state if match is active
   let liveGameState = null;
   if (match.status !== "RESOLVED") {
     try {
       const gs = await solanaService.fetchGameState(match.gamePda);
       liveGameState = serializeGameState(gs);
-    } catch (error) {
-      logger.warn("Failed to fetch live game state", {
-        matchId,
-        error: error.message,
-      });
-    }
+    } catch (err) { logger.warn("Failed to fetch live game state", { matchId, error: err.message }); }
   }
 
-  return { match, liveGameState };
+  const redisState = await getGameState(match.gameId);
+  return { match, liveGameState, redisState };
 }
 
-/**
- * Get the currently active match (if any).
- */
 export async function getActiveMatch() {
-  const match = await prisma.match.findFirst({
-    where: { status: "ACTIVE" },
-    include: { markets: true },
-    orderBy: { createdAt: "desc" },
+  return prisma.match.findFirst({
+    where: { status: "ACTIVE" }, include: { markets: true }, orderBy: { createdAt: "desc" },
   });
-
-  return match;
 }
 
-/**
- * List matches with optional status filter and pagination.
- */
 export async function listMatches({ status, page = 1, limit = 20 } = {}) {
   const where = status ? { status } : {};
   const skip = (page - 1) * limit;
-
   const [matches, total] = await Promise.all([
     prisma.match.findMany({
-      where,
-      include: { markets: { select: { id: true, slug: true, status: true } } },
-      orderBy: { createdAt: "desc" },
-      skip,
-      take: limit,
+      where, include: { markets: { select: { id: true, slug: true, status: true } } },
+      orderBy: { createdAt: "desc" }, skip, take: limit,
     }),
     prisma.match.count({ where }),
   ]);
+  return { matches, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+}
 
+// ── Helpers ─────────────────────────────────────────────────────────
+
+async function buildStats(gameId, gs) {
+  const phase = parseGamePhase(gs.phase);
+  const state = await getGameState(gameId);
   return {
-    matches,
-    pagination: {
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit),
-    },
+    gameId: gs.gameId?.toNumber?.() ?? gs.gameId,
+    phase, roundNumber: gs.roundNumber,
+    activePlayer: parseColor(gs.activePlayer),
+    winner: gs.winner ? parseColor(gs.winner) : null,
+    red: { hp: gs.p1Hp, score: gs.p1Score, aces: gs.p1Aces, stayed: gs.p1Stayed, cards: state?.red?.cards || [] },
+    blue: { hp: gs.p2Hp, score: gs.p2Score, aces: gs.p2Aces, stayed: gs.p2Stayed, cards: state?.blue?.cards || [] },
+    river: { red: state?.riverRed, blue: state?.riverBlue },
+    tiebreakerCards: state?.tiebreakerCards || [],
+    pastRounds: state?.pastRounds || [],
   };
 }
 
-// ── Serialization ───────────────────────────────────────────────────
-
-/**
- * Convert an Anchor GameState account into a plain JSON-safe object.
- */
 function serializeGameState(gs) {
   return {
     gameId: gs.gameId?.toNumber?.() ?? gs.gameId,
     agentRed: gs.agentRed?.toBase58?.() ?? gs.agentRed,
     agentBlue: gs.agentBlue?.toBase58?.() ?? gs.agentBlue,
-    p1Hp: gs.p1Hp,
-    p2Hp: gs.p2Hp,
-    p1Score: gs.p1Score,
-    p2Score: gs.p2Score,
-    p1Aces: gs.p1Aces,
-    p2Aces: gs.p2Aces,
-    p1Stayed: gs.p1Stayed,
-    p2Stayed: gs.p2Stayed,
-    roundNumber: gs.roundNumber,
-    phase: parseGamePhase(gs.phase),
-    activePlayer: parseColor(gs.activePlayer),
-    winner: gs.winner ? parseColor(gs.winner) : null,
+    p1Hp: gs.p1Hp, p2Hp: gs.p2Hp, p1Score: gs.p1Score, p2Score: gs.p2Score,
+    p1Aces: gs.p1Aces, p2Aces: gs.p2Aces, p1Stayed: gs.p1Stayed, p2Stayed: gs.p2Stayed,
+    roundNumber: gs.roundNumber, phase: parseGamePhase(gs.phase),
+    activePlayer: parseColor(gs.activePlayer), winner: gs.winner ? parseColor(gs.winner) : null,
   };
 }
