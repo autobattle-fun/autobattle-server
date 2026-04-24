@@ -31,7 +31,7 @@ import { logger } from "./logger.js";
  * Card = { value: number, label: string }
  */
 
-const KEY_PREFIX = "game";
+const KEY_PREFIX = "autobattle:game";
 const STATE_TTL = 86400; // 24h — auto-cleanup for abandoned matches
 
 function stateKey(gameId) {
@@ -281,7 +281,7 @@ export function formatCardHistory(state) {
 
 // ── Match Break Countdown ───────────────────────────────────────────
 
-const BREAK_KEY = "match:next_start_at";
+const BREAK_KEY = "autobattle:match:next_start_at";
 
 /**
  * Set a countdown for the next match start (stored as Unix timestamp in Redis).

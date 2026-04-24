@@ -11,21 +11,11 @@ import { getMatchBreakCountdown } from "./game-state-store.js";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 
-// ── User IDs List ───────────────────────────────────────────────────
-// Populate this list with Telegram user IDs who should receive notifications.
-// These are separate from TELEGRAM_CHAT_IDS in env (which are for group chats).
-const NOTIFICATION_USER_IDS = [
-  // Add Telegram user IDs here, e.g.:
-  // "123456789",
-  // "987654321",
-];
-
 /**
- * Get all notification targets (env chat IDs + hardcoded user IDs).
+ * Get all notification targets (env chat IDs).
  */
 function getAllChatIds() {
-  const envIds = env.TELEGRAM_CHAT_IDS || [];
-  return [...new Set([...envIds, ...NOTIFICATION_USER_IDS])];
+  return env.TELEGRAM_CHAT_IDS || [];
 }
 
 /**
@@ -283,6 +273,13 @@ async function handleUpdate(update) {
 
   const chatId = message.chat.id;
   const text = message.text.trim();
+  const userId = String(message.from?.id);
+
+  const allowedIds = getAllChatIds();
+  if (!allowedIds.includes(userId) && !allowedIds.includes(String(chatId))) {
+    await sendMessage(chatId, "I do not know you");
+    return;
+  }
 
   if (!text.startsWith("/")) return;
 

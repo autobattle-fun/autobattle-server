@@ -8,7 +8,7 @@ import { wsEvents } from "./websocket.js";
 
 // ── Distributed Lock ────────────────────────────────────────────────
 
-const CRANK_LOCK_KEY = "crank:active_lock";
+const CRANK_LOCK_KEY = "autobattle:crank:active_lock";
 const CRANK_LOCK_TTL = 120; // seconds — max time a single crank cycle can hold the lock
 
 /**

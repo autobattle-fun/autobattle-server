@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { env } from "../config/env.js";
 import { redis } from "../db/redis.js";
 
-const sessionPrefix = "session:";
+const sessionPrefix = "autobattle:session:";
 
 function buildSessionKey(sessionToken) {
   return `${sessionPrefix}${sessionToken}`;
