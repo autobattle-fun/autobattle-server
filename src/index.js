@@ -6,6 +6,7 @@ import { prisma } from "./db/prisma.js";
 import { redis } from "./db/redis.js";
 import { startCrankEngine, stopCrankEngine } from "./lib/crank.js";
 import { initWebSocket } from "./lib/websocket.js";
+import { startTelegramBot, stopTelegramBot } from "./lib/telegram.js";
 
 async function start(workerId) {
   try {
@@ -43,12 +44,14 @@ async function start(workerId) {
     // Start crank engine on worker 1 only to avoid duplicates
     if (workerId === 1) {
       startCrankEngine();
+      startTelegramBot();
     }
   });
 
   const shutdown = async () => {
     logger.info("Shutting down API server", { workerId });
     stopCrankEngine();
+    stopTelegramBot();
     server.close(async () => {
       await prisma.$disconnect();
       process.exit(0);

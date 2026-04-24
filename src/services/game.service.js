@@ -5,11 +5,14 @@ import { solanaService, ROLL_TYPE } from "./solana.service.js";
 import { decideAction } from "../lib/agent-strategy.js";
 import { selectMatchModels } from "../lib/llm-client.js";
 import { wsEvents } from "../lib/websocket.js";
+import { withRetry } from "../lib/transaction-retry.js";
+import { env } from "../config/env.js";
 import {
   initGameState, getGameState, syncOnChainState,
   recordCardDealt, recordRiverCards, recordTiebreakerCards,
   recordMove, archiveRound, deleteGameState,
   inferCard, formatCardHistory,
+  setMatchBreakCountdown, clearMatchBreakCountdown,
 } from "../lib/game-state-store.js";
 import {
   deriveGamePda, deriveMarketPda, deriveVaultPda,
@@ -30,11 +33,18 @@ export async function startMatch() {
 
   logger.info("Starting match", { gameId, matchUuid, llmRed: redModel, llmBlue: blueModel });
 
-  await solanaService.initGame(gameId, redAgent, blueAgent);
+  await withRetry(
+    () => solanaService.initGame(gameId, redAgent, blueAgent),
+    { label: "initGame", gameId },
+  );
 
   const closesAtUnix = Math.floor(Date.now() / 1000) + 3_153_600_000;
   const question = `Will Red Win Match #${gameId}?`;
-  await solanaService.createOnChainMarket(gameId, 0, question, closesAtUnix);
+
+  await withRetry(
+    () => solanaService.createOnChainMarket(gameId, 0, question, closesAtUnix),
+    { label: "createOnChainMarket", gameId },
+  );
 
   const result = await prisma.$transaction(async (tx) => {
     const match = await tx.match.create({
@@ -57,6 +67,9 @@ export async function startMatch() {
     return { match, market };
   });
 
+  // Clear any existing break countdown since a new match is starting
+  await clearMatchBreakCountdown();
+
   await initGameState({ gameId, matchId: result.match.id, matchUuid });
   wsEvents.matchCreated(result.match);
   logger.info("Match started", { matchId: result.match.id, gameId });
@@ -72,6 +85,7 @@ export async function playRound(matchId) {
   });
   if (!match) { const e = new Error("Match not found"); e.statusCode = 404; throw e; }
   if (match.status === "RESOLVED") { const e = new Error("Match already resolved"); e.statusCode = 400; throw e; }
+  if (match.status === "PAUSED") { const e = new Error("Match is paused — resume before continuing"); e.statusCode = 400; throw e; }
 
   const { gameId, matchUuid, llmRed, llmBlue } = match;
   const marketPda = match.markets[0]?.marketPda;
@@ -86,7 +100,10 @@ export async function playRound(matchId) {
   }
 
   // Step 1: Deal initial cards
-  await solanaService.vrfStep(gameId, ROLL_TYPE.INITIAL_DEAL);
+  await withRetry(
+    () => solanaService.vrfStep(gameId, ROLL_TYPE.INITIAL_DEAL),
+    { label: "vrfStep:INITIAL_DEAL", matchId, gameId },
+  );
   let gs = await solanaService.fetchGameState(gameId);
   let state = await getGameState(gameId);
   if (!state) state = await initGameState({ gameId, matchId, matchUuid });
@@ -118,7 +135,10 @@ export async function playRound(matchId) {
   const preRiverRedAces = gs.p1Aces;
   const preRiverBlueAces = gs.p2Aces;
 
-  await solanaService.vrfStep(gameId, ROLL_TYPE.FINAL_REVEAL);
+  await withRetry(
+    () => solanaService.vrfStep(gameId, ROLL_TYPE.FINAL_REVEAL),
+    { label: "vrfStep:FINAL_REVEAL", matchId, gameId },
+  );
   gs = await solanaService.fetchGameState(gameId);
 
   const riverRedCard = inferCard(preRiverRedScore, gs.p1Score, preRiverRedAces, gs.p1Aces);
@@ -133,7 +153,10 @@ export async function playRound(matchId) {
 
   // Step 4: Resolve round
   try {
-    await solanaService.resolveRound(gameId, marketPda);
+    await withRetry(
+      () => solanaService.resolveRound(gameId, marketPda),
+      { label: "resolveRound", matchId, gameId },
+    );
   } catch (error) {
     if (!error.message?.includes("MarketAlreadyResolved") && !error.message?.includes("GameAlreadyEnded")) throw error;
     logger.warn("Market/game already resolved, continuing", { gameId });
@@ -151,7 +174,10 @@ export async function playRound(matchId) {
     const preTbRedScore = gs.p1Score; const preTbBlueScore = gs.p2Score;
     const preTbRedAces = gs.p1Aces; const preTbBlueAces = gs.p2Aces;
 
-    await solanaService.vrfStep(gameId, ROLL_TYPE.TIEBREAKER);
+    await withRetry(
+      () => solanaService.vrfStep(gameId, ROLL_TYPE.TIEBREAKER),
+      { label: "vrfStep:TIEBREAKER", matchId, gameId },
+    );
     gs = await solanaService.fetchGameState(gameId);
 
     const tbRedCard = inferCard(preTbRedScore, gs.p1Score, preTbRedAces, gs.p1Aces);
@@ -164,7 +190,10 @@ export async function playRound(matchId) {
     });
 
     try {
-      await solanaService.resolveRound(gameId, marketPda);
+      await withRetry(
+        () => solanaService.resolveRound(gameId, marketPda),
+        { label: "resolveRound:tiebreaker", matchId, gameId },
+      );
     } catch (error) {
       if (!error.message?.includes("MarketAlreadyResolved") && !error.message?.includes("GameAlreadyEnded")) throw error;
     }
@@ -227,6 +256,12 @@ export async function playRound(matchId) {
       totalRounds: gs.roundNumber, llmRed, llmBlue,
     });
     await deleteGameState(gameId);
+
+    // Set the break countdown for the next match
+    const breakSeconds = env.MATCH_BREAK_SECONDS;
+    const nextStartAtUnix = Math.floor(Date.now() / 1000) + breakSeconds;
+    await setMatchBreakCountdown(nextStartAtUnix);
+    logger.info("Match break started", { breakSeconds, nextStartAt: new Date(nextStartAtUnix * 1000).toISOString() });
   }
 
   return { match: updatedMatch, gameState: serializeGameState(gs) };
@@ -272,7 +307,10 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
     const scoreBefore = myScore;
 
     if (action === "HIT") {
-      const txSig = await solanaService.vrfStep(gameId, ROLL_TYPE.HIT, player);
+      const txSig = await withRetry(
+        () => solanaService.vrfStep(gameId, ROLL_TYPE.HIT, player),
+        { label: `vrfStep:HIT:${player}`, matchId: match.id, gameId },
+      );
       const updated = await solanaService.fetchGameState(gameId);
 
       const newScore = isRed ? updated.p1Score : updated.p2Score;
@@ -307,7 +345,10 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
       }
       await syncOnChainState(gameId, updated, parseGamePhase(updated.phase));
     } else {
-      const txSig = await solanaService.stay(gameId, player);
+      const txSig = await withRetry(
+        () => solanaService.stay(gameId, player),
+        { label: `stay:${player}`, matchId: match.id, gameId },
+      );
       await recordMove(gameId, {
         player, action: "STAY", reason, model, scoreBefore, scoreAfter: scoreBefore,
         cardDealt: null, txSignature: txSig,
@@ -327,6 +368,12 @@ async function syncMatchState(match, gs) {
   const isEnded = phase === "ENDED";
   const winner = isEnded ? (gs.p1Hp === 0 ? "BLUE" : "RED") : null;
 
+  // Don't transition out of PAUSED state automatically
+  const currentMatch = await prisma.match.findUnique({ where: { id: match.id }, select: { status: true } });
+  if (currentMatch?.status === "PAUSED") {
+    return currentMatch;
+  }
+
   const updatedMatch = await prisma.match.update({
     where: { id: match.id },
     data: {
@@ -345,6 +392,44 @@ async function syncMatchState(match, gs) {
     logger.info("Match ended", { matchId: match.id, gameId: match.gameId, winner });
   }
   return updatedMatch;
+}
+
+// ── Pause / Resume ──────────────────────────────────────────────────
+
+/**
+ * Manually pause a match.
+ */
+export async function pauseMatch(matchId, reason = "Manual pause") {
+  const match = await prisma.match.findUnique({ where: { id: matchId } });
+  if (!match) { const e = new Error("Match not found"); e.statusCode = 404; throw e; }
+  if (match.status !== "ACTIVE") { const e = new Error(`Cannot pause match in ${match.status} state`); e.statusCode = 400; throw e; }
+
+  const updated = await prisma.match.update({
+    where: { id: matchId },
+    data: { status: "PAUSED" },
+  });
+
+  wsEvents.gamePaused(matchId, { reason, error: null });
+  logger.info("Match manually paused", { matchId, reason });
+  return updated;
+}
+
+/**
+ * Resume a paused match.
+ */
+export async function resumeMatch(matchId) {
+  const match = await prisma.match.findUnique({ where: { id: matchId } });
+  if (!match) { const e = new Error("Match not found"); e.statusCode = 404; throw e; }
+  if (match.status !== "PAUSED") { const e = new Error(`Cannot resume match in ${match.status} state`); e.statusCode = 400; throw e; }
+
+  const updated = await prisma.match.update({
+    where: { id: matchId },
+    data: { status: "ACTIVE" },
+  });
+
+  wsEvents.gameResumed(matchId);
+  logger.info("Match resumed", { matchId });
+  return updated;
 }
 
 // ── Multi-Round Automation ──────────────────────────────────────────
@@ -382,7 +467,7 @@ export async function getMatchState(matchId) {
 
 export async function getActiveMatch() {
   return prisma.match.findFirst({
-    where: { status: "ACTIVE" }, include: { markets: true }, orderBy: { createdAt: "desc" },
+    where: { status: { in: ["ACTIVE", "PAUSED"] } }, include: { markets: true }, orderBy: { createdAt: "desc" },
   });
 }
 

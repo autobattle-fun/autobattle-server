@@ -1,8 +1,10 @@
 import { prisma } from "../db/prisma.js";
 import { redis } from "../db/redis.js";
 import { logger } from "./logger.js";
-import { playRound } from "../services/game.service.js";
+import { playRound, startMatch } from "../services/game.service.js";
 import { env } from "../config/env.js";
+import { getMatchBreakCountdown, clearMatchBreakCountdown } from "./game-state-store.js";
+import { wsEvents } from "./websocket.js";
 
 // ── Distributed Lock ────────────────────────────────────────────────
 
@@ -31,10 +33,11 @@ let intervalHandle = null;
 
 /**
  * Start the crank engine. Runs a polling loop that:
- *  1. Finds active matches
- *  2. Acquires a distributed lock per match
- *  3. Advances each match by one round
- *  4. Releases the lock
+ *  1. Checks if a new match should auto-start (after break)
+ *  2. Finds active matches (skips PAUSED)
+ *  3. Acquires a distributed lock per match
+ *  4. Advances each match by one round
+ *  5. Releases the lock
  *
  * The crank only runs on a single worker to avoid duplicate operations.
  */
@@ -79,10 +82,18 @@ export function stopCrankEngine() {
 }
 
 /**
- * A single crank cycle: find active matches and advance each by one round.
+ * A single crank cycle:
+ *  1. Check if break has expired → auto-start a new match
+ *  2. Find active matches and advance each by one round
+ *  3. Skip PAUSED matches
  */
 async function crankCycle() {
+  // ── Phase 1: Auto-start new match after break ─────────────────
+  await maybeAutoStartMatch();
+
+  // ── Phase 2: Advance active matches ───────────────────────────
   // Find all ACTIVE matches (PENDING matches must be activated via API first)
+  // PAUSED matches are explicitly skipped
   const activeMatches = await prisma.match.findMany({
     where: { status: "ACTIVE" },
     orderBy: { createdAt: "asc" },
@@ -124,8 +135,51 @@ async function crankCycle() {
         gameId: match.gameId,
         error: error instanceof Error ? error.message : String(error),
       });
+      // Note: If the error was a transaction failure, withRetry in game.service
+      // will have already paused the match and sent notifications.
     } finally {
       await releaseLock(match.id);
     }
+  }
+}
+
+/**
+ * Check if the break between matches has expired, and auto-start a new match if so.
+ * Only starts a new match if:
+ *  - No ACTIVE or PENDING matches exist
+ *  - The break countdown has expired (or no countdown is set)
+ */
+async function maybeAutoStartMatch() {
+  try {
+    // Check if there are any active, pending, or paused matches
+    const existingMatch = await prisma.match.findFirst({
+      where: { status: { in: ["ACTIVE", "PENDING", "PAUSED"] } },
+    });
+
+    if (existingMatch) {
+      // A match is in progress or paused — don't start a new one
+      return;
+    }
+
+    // Check the break countdown
+    const countdown = await getMatchBreakCountdown();
+
+    if (countdown.isBreak) {
+      // Still in break period — broadcast countdown and wait
+      wsEvents.breakCountdown({
+        remainingSeconds: countdown.remainingSeconds,
+        nextStartAt: countdown.nextStartAt,
+      });
+      return;
+    }
+
+    // No active match, no break → start a new match
+    logger.info("Break expired — auto-starting new match");
+    await clearMatchBreakCountdown();
+    await startMatch();
+  } catch (error) {
+    logger.error("Auto-start match failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }

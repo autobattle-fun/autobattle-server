@@ -5,12 +5,15 @@ import {
   getMatchState,
   getActiveMatch,
   listMatches,
+  pauseMatch,
+  resumeMatch,
 } from "../services/game.service.js";
 import {
   validate,
   advanceMatchSchema,
   listMatchesSchema,
 } from "../utils/validators.js";
+import { getMatchBreakCountdown } from "../lib/game-state-store.js";
 
 /**
  * POST /games/start
@@ -64,7 +67,7 @@ export async function listMatchesController(request, response) {
 
 /**
  * GET /games/active
- * Get the currently active match.
+ * Get the currently active match (includes PAUSED matches).
  */
 export async function activeMatchController(request, response) {
   const match = await getActiveMatch();
@@ -94,5 +97,49 @@ export async function getMatchController(request, response) {
   return response.json({
     success: true,
     data: result,
+  });
+}
+
+/**
+ * POST /games/:matchId/pause
+ * Manually pause an active match. Requires admin API key.
+ */
+export async function pauseMatchController(request, response) {
+  const { matchId } = request.params;
+  const reason = request.body?.reason || "Manual pause via API";
+  const result = await pauseMatch(matchId, reason);
+
+  return response.json({
+    success: true,
+    message: `Match #${result.gameId} paused.`,
+    data: result,
+  });
+}
+
+/**
+ * POST /games/:matchId/resume
+ * Resume a paused match. Requires admin API key.
+ */
+export async function resumeMatchController(request, response) {
+  const { matchId } = request.params;
+  const result = await resumeMatch(matchId);
+
+  return response.json({
+    success: true,
+    message: `Match #${result.gameId} resumed.`,
+    data: result,
+  });
+}
+
+/**
+ * GET /games/countdown
+ * Get the current break countdown between matches.
+ */
+export async function countdownController(request, response) {
+  const countdown = await getMatchBreakCountdown();
+
+  return response.json({
+    success: true,
+    data: countdown,
   });
 }

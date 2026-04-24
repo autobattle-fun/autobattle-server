@@ -278,3 +278,50 @@ export function formatCardHistory(state) {
 
   return lines.join("\n");
 }
+
+// ── Match Break Countdown ───────────────────────────────────────────
+
+const BREAK_KEY = "match:next_start_at";
+
+/**
+ * Set a countdown for the next match start (stored as Unix timestamp in Redis).
+ * @param {number} nextStartAtUnix - Unix timestamp (seconds) when the next match should start
+ */
+export async function setMatchBreakCountdown(nextStartAtUnix) {
+  const ttl = Math.max(nextStartAtUnix - Math.floor(Date.now() / 1000), 1);
+  await redis.setex(BREAK_KEY, ttl + 60, String(nextStartAtUnix)); // +60s buffer for reading after expiry
+  logger.info("Match break countdown set", { nextStartAt: new Date(nextStartAtUnix * 1000).toISOString(), ttlSeconds: ttl });
+}
+
+/**
+ * Get the current match break countdown status.
+ * @returns {{ isBreak: boolean, remainingSeconds: number, nextStartAt: string | null }}
+ */
+export async function getMatchBreakCountdown() {
+  const raw = await redis.get(BREAK_KEY);
+  if (!raw) {
+    return { isBreak: false, remainingSeconds: 0, nextStartAt: null };
+  }
+
+  const nextStartAtUnix = parseInt(raw, 10);
+  const nowUnix = Math.floor(Date.now() / 1000);
+  const remaining = nextStartAtUnix - nowUnix;
+
+  if (remaining <= 0) {
+    return { isBreak: false, remainingSeconds: 0, nextStartAt: null };
+  }
+
+  return {
+    isBreak: true,
+    remainingSeconds: remaining,
+    nextStartAt: new Date(nextStartAtUnix * 1000).toISOString(),
+  };
+}
+
+/**
+ * Clear the match break countdown (e.g. when a new match starts).
+ */
+export async function clearMatchBreakCountdown() {
+  await redis.del(BREAK_KEY);
+  logger.info("Match break countdown cleared");
+}

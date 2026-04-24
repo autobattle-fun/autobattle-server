@@ -65,6 +65,25 @@ const envSchema = z.object({
     .optional()
     .transform((value) => value === true || value === "true")
     .default(false),
+
+  // ── Match Break ──
+  MATCH_BREAK_SECONDS: z.coerce.number().int().positive().default(300),
+
+  // ── Telegram Notifications ──
+  TELEGRAM_BOT_TOKEN: z.string().optional(),
+  TELEGRAM_CHAT_IDS: z
+    .string()
+    .optional()
+    .transform((value) => {
+      if (!value) return [];
+      return value
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean);
+    }),
+
+  // ── Admin API Key ──
+  ADMIN_API_KEY: z.string().min(1).optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

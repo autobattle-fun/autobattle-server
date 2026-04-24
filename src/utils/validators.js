@@ -29,7 +29,7 @@ export const recordPredictionSchema = z
 
 export const listMatchesSchema = z
   .object({
-    status: z.enum(["PENDING", "ACTIVE", "RESOLVED"]).optional(),
+    status: z.enum(["PENDING", "ACTIVE", "PAUSED", "RESOLVED"]).optional(),
     page: z.coerce.number().int().min(1).default(1),
     limit: z.coerce.number().int().min(1).max(50).default(20),
   })

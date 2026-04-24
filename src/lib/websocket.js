@@ -1,5 +1,8 @@
 import { WebSocketServer } from "ws";
 import { logger } from "./logger.js";
+import { prisma } from "../db/prisma.js";
+import { getGameState, getMatchBreakCountdown } from "./game-state-store.js";
+import { notifyEvent } from "./telegram.js";
 
 // ── WebSocket Manager ───────────────────────────────────────────────
 //
@@ -23,7 +26,7 @@ export function initWebSocket(httpServer) {
     // { "type": "subscribe", "matchId": "cuid..." }
     ws.subscribedMatchId = null;
 
-    ws.on("message", (raw) => {
+    ws.on("message", async (raw) => {
       try {
         const message = JSON.parse(raw.toString());
 
@@ -38,6 +41,8 @@ export function initWebSocket(httpServer) {
           logger.info("Client subscribed to match", {
             matchId: message.matchId,
           });
+        } else if (message.type === "ping") {
+          await handlePing(ws, message);
         }
       } catch {
         // Ignore malformed messages
@@ -64,10 +69,84 @@ export function initWebSocket(httpServer) {
   logger.info("WebSocket server initialized", { path: "/ws" });
 }
 
+// ── Ping-Pong Handler ───────────────────────────────────────────────
+
+/**
+ * Handle a client ping and respond with game state + latency.
+ *
+ * Client sends:  { "type": "ping", "timestamp": 1714000000000 }
+ * Server sends:  { "type": "pong", "latency": 42, "gameState": {...}, "countdown": {...}, "serverTimestamp": ... }
+ */
+async function handlePing(ws, message) {
+  const serverTimestamp = Date.now();
+  const clientTimestamp = message.timestamp || serverTimestamp;
+  const latency = Math.max(0, serverTimestamp - clientTimestamp);
+
+  let gameState = null;
+  let countdown = null;
+
+  try {
+    // Check for active or paused match
+    const activeMatch = await prisma.match.findFirst({
+      where: { status: { in: ["ACTIVE", "PAUSED", "PENDING"] } },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        gameId: true,
+        matchUuid: true,
+        status: true,
+        roundNumber: true,
+        redHp: true,
+        blueHp: true,
+        llmRed: true,
+        llmBlue: true,
+        agentRed: true,
+        agentBlue: true,
+        createdAt: true,
+      },
+    });
+
+    if (activeMatch) {
+      // Get detailed game state from Redis
+      const redisState = await getGameState(activeMatch.gameId);
+
+      gameState = {
+        matchId: activeMatch.id,
+        gameId: activeMatch.gameId,
+        status: activeMatch.status,
+        roundNumber: activeMatch.roundNumber,
+        redHp: activeMatch.redHp,
+        blueHp: activeMatch.blueHp,
+        llmRed: activeMatch.llmRed,
+        llmBlue: activeMatch.llmBlue,
+        phase: redisState?.phase || activeMatch.status,
+        red: redisState?.red || null,
+        blue: redisState?.blue || null,
+      };
+    } else {
+      // No active match — check for break countdown
+      countdown = await getMatchBreakCountdown();
+    }
+  } catch (error) {
+    logger.warn("Error building pong response", { error: error.message });
+  }
+
+  ws.send(
+    JSON.stringify({
+      type: "pong",
+      latency,
+      gameState,
+      countdown,
+      serverTimestamp,
+    }),
+  );
+}
+
 // ── Event Broadcasting ──────────────────────────────────────────────
 
 /**
  * Broadcast a game event to all connected clients.
+ * Also forwards the event as a Telegram notification.
  */
 export function broadcast(eventType, payload, matchId) {
   if (!wss) return;
@@ -98,6 +177,9 @@ export function broadcast(eventType, payload, matchId) {
   if (sent > 0) {
     logger.info("WebSocket broadcast", { eventType, matchId, clients: sent });
   }
+
+  // Forward to Telegram (fire-and-forget, never block the broadcast)
+  notifyEvent(eventType, payload, matchId).catch(() => {});
 }
 
 // ── Typed Event Helpers ─────────────────────────────────────────────
@@ -189,5 +271,25 @@ export const wsEvents = {
       { winner, gameId, totalRounds, llmRed, llmBlue },
       matchId,
     );
+  },
+
+  gamePaused(matchId, { reason, error }) {
+    broadcast(
+      "game:paused",
+      { matchId, reason, error },
+      matchId,
+    );
+  },
+
+  gameResumed(matchId) {
+    broadcast(
+      "game:resumed",
+      { matchId },
+      matchId,
+    );
+  },
+
+  breakCountdown({ remainingSeconds, nextStartAt }) {
+    broadcast("break:countdown", { remainingSeconds, nextStartAt });
   },
 };

@@ -162,6 +162,7 @@ enum MarketStatus {
 enum MatchStatus {
   PENDING // Market is OPEN, waiting for initial deal
   ACTIVE // Match is fighting / dealing cards
+  PAUSED // Halted due to critical transaction failure — awaiting dev intervention
   RESOLVED // HP hit 0, Game over
 }
 
