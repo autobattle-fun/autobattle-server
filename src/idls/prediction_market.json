@@ -142,6 +142,10 @@
           "name": "auto_mint"
         },
         {
+          "name": "creator_token_account",
+          "writable": true
+        },
+        {
           "name": "authority",
           "writable": true,
           "signer": true
@@ -239,9 +243,6 @@
         },
         {
           "name": "authority",
-          "docs": [
-            "Authority = multisig key OR game-engine PDA (for win market auto-resolution)."
-          ],
           "signer": true
         }
       ],
@@ -381,6 +382,10 @@
     {
       "name": "SharesBought",
       "discriminator": [240, 98, 69, 10, 253, 234, 226, 65]
+    },
+    {
+      "name": "SharesSold",
+      "discriminator": [35, 231, 5, 53, 228, 158, 113, 251]
     }
   ],
   "errors": [
@@ -453,6 +458,16 @@
       "code": 6013,
       "name": "BetTooLarge",
       "msg": "Bet size exceeds the mathematical limits of the AMM"
+    },
+    {
+      "code": 6014,
+      "name": "LpAlreadyWithdrawn",
+      "msg": "LP has already been withdrawn"
+    },
+    {
+      "code": 6015,
+      "name": "InvalidMint",
+      "msg": "Invalid mint account"
     }
   ],
   "types": [
@@ -508,10 +523,6 @@
             "type": "i64"
           },
           {
-            "name": "claims_remaining",
-            "type": "u64"
-          },
-          {
             "name": "fee_balance",
             "type": "u64"
           },
@@ -522,6 +533,10 @@
           {
             "name": "vault_bump",
             "type": "u8"
+          },
+          {
+            "name": "lp_withdrawn",
+            "type": "bool"
           }
         ]
       }
@@ -679,6 +694,42 @@
           },
           {
             "name": "shares_out",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SharesSold",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "game_id",
+            "type": "u64"
+          },
+          {
+            "name": "market_index",
+            "type": "u8"
+          },
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "outcome",
+            "type": {
+              "defined": {
+                "name": "Outcome"
+              }
+            }
+          },
+          {
+            "name": "shares_in",
+            "type": "u64"
+          },
+          {
+            "name": "amount_out",
             "type": "u64"
           }
         ]

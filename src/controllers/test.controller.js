@@ -95,6 +95,11 @@ export async function createMarket(req, res) {
     // Set expiry 100 years in the future (Permanent Polymarket Mode)
     const closesAtUnix = Math.floor(Date.now() / 1000) + 3153600000;
 
+    const creatorTokenAccount = getAssociatedTokenAddressSync(
+      AUTO_MINT_ADDRESS,
+      crank,
+    );
+
     // Create MAIN Market (Index 0)
     await solanaService.predMarket.methods
       .createMarket(
@@ -107,6 +112,7 @@ export async function createMarket(req, res) {
         market: mainMarketPda,
         vault: mainVaultPda,
         autoMint: AUTO_MINT_ADDRESS,
+        creatorTokenAccount: creatorTokenAccount,
         authority: crank,
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
@@ -126,6 +132,7 @@ export async function createMarket(req, res) {
         market: round1MarketPda,
         vault: round1VaultPda,
         autoMint: AUTO_MINT_ADDRESS,
+        creatorTokenAccount: creatorTokenAccount,
         authority: crank,
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
@@ -926,12 +933,10 @@ export async function verifyClaim(req, res) {
     );
 
     if (!isClaimTx) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          error: "This signature is not for a claim instruction.",
-        });
+      return res.status(403).json({
+        success: false,
+        error: "This signature is not for a claim instruction.",
+      });
     }
 
     // 3. Update the Prediction record in Prisma
@@ -965,6 +970,179 @@ export async function verifyClaim(req, res) {
     });
   } catch (error) {
     console.error("Verify claim error:", error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+export async function buildSellTransaction(req, res) {
+  const { userPubkey, marketId, side, amountShares } = req.body;
+
+  try {
+    const user = new PublicKey(userPubkey);
+
+    const market = await prisma.market.findUnique({ where: { id: marketId } });
+    if (!market || market.status !== "OPEN") {
+      return res
+        .status(400)
+        .json({ success: false, error: "Market not found or closed." });
+    }
+
+    const marketPda = new PublicKey(market.marketPda);
+    const vaultPda = new PublicKey(market.vaultPda);
+    const userTokenAccount = getAssociatedTokenAddressSync(
+      AUTO_MINT_ADDRESS,
+      user,
+    );
+
+    const [positionPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("position"), marketPda.toBuffer(), user.toBuffer()],
+      PRED_MARKET_PROGRAM_ID,
+    );
+
+    const rawAmount = new BN(Math.floor(amountShares * 1_000_000));
+    const minTokensOut = new BN(1); // Slippage protection
+
+    const sideArg = side.toUpperCase() === "YES" ? { yes: {} } : { no: {} };
+
+    // Note: Verify the exact method name in your Rust contract (e.g., sellShares)
+    const sellIx = await solanaService.predMarket.methods
+      .sellShares(sideArg, rawAmount, minTokensOut)
+      .accounts({
+        market: marketPda,
+        userPosition: positionPda,
+        vault: vaultPda,
+        userTokenAccount: userTokenAccount,
+        user: user,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .instruction();
+
+    const tx = new Transaction().add(sellIx);
+    const { blockhash } =
+      await solanaService.connection.getLatestBlockhash("finalized");
+    tx.recentBlockhash = blockhash;
+    tx.feePayer = user;
+
+    const serializedTx = tx.serialize({
+      requireAllSignatures: false,
+      verifySignatures: false,
+    });
+
+    return res.status(200).json({
+      success: true,
+      transaction: serializedTx.toString("base64"),
+    });
+  } catch (error) {
+    console.error("Build sell error:", error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+export async function verifySell(req, res) {
+  const { signature, marketId, userPubkey, side, amountShares } = req.body;
+
+  try {
+    const status = await solanaService.connection.getSignatureStatus(
+      signature,
+      { searchTransactionHistory: true },
+    );
+    if (!status?.value || status.value.err) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Transaction failed or not found." });
+    }
+
+    const txInfo = await solanaService.connection.getParsedTransaction(
+      signature,
+      { maxSupportedTransactionVersion: 0, commitment: "confirmed" },
+    );
+    const logs = txInfo?.meta?.logMessages || [];
+
+    // Adjust this to match your Rust instruction log!
+    if (!logs.some((log) => log.includes("Instruction: SellShares"))) {
+      return res
+        .status(403)
+        .json({ success: false, error: "Not a valid sell transaction." });
+    }
+
+    const market = await prisma.market.findUnique({ where: { id: marketId } });
+    let dbSide =
+      side.toUpperCase() === "RED"
+        ? "YES"
+        : side.toUpperCase() === "BLUE"
+          ? "NO"
+          : side.toUpperCase();
+
+    const userRecord = await prisma.user.findUnique({
+      where: { privyUserId: userPubkey },
+    });
+    if (!userRecord)
+      return res.status(404).json({ success: false, error: "User not found." });
+
+    // Use Prisma's atomic decrement to safely reduce their position
+    await prisma.prediction.updateMany({
+      where: {
+        userId: userRecord.id,
+        marketId: market.id,
+        side: dbSide,
+      },
+      data: {
+        amount: {
+          decrement: amountShares,
+        },
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Sell successfully verified and recorded.",
+    });
+  } catch (error) {
+    console.error("Verify sell error:", error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+export async function retrieveLp(req, res) {
+  const marketId = req.params.marketId;
+
+  try {
+    const market = await prisma.market.findUnique({ where: { id: marketId } });
+    if (!market || market.status !== "RESOLVED") {
+      return res.status(400).json({
+        success: false,
+        error: "Market must be resolved to retrieve LP.",
+      });
+    }
+
+    const marketPda = new PublicKey(market.marketPda);
+    const vaultPda = new PublicKey(market.vaultPda);
+    const crank = solanaService.crankKeypair;
+    const creatorTokenAccount = getAssociatedTokenAddressSync(
+      AUTO_MINT_ADDRESS,
+      crank.publicKey,
+    );
+
+    // Call the retrieve function (Check your Rust contract for the exact name, e.g., retrieveLp or withdrawLiquidity)
+    const txSig = await solanaService.predMarket.methods
+      .withdrawLp()
+      .accounts({
+        market: marketPda,
+        vault: vaultPda,
+        adminTokenAccount: creatorTokenAccount,
+        authority: crank.publicKey,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .signers([crank]) // The backend signs this automatically!
+      .rpc();
+
+    return res.status(200).json({
+      success: true,
+      message: `LP successfully retrieved for market ${market.slug}`,
+      txSig: txSig,
+    });
+  } catch (error) {
+    console.error("Retrieve LP error:", error);
     return res.status(500).json({ success: false, error: error.message });
   }
 }

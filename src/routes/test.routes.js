@@ -12,6 +12,9 @@ import {
   verifyTrade,
   buildClaimTransaction,
   verifyClaim,
+  buildSellTransaction,
+  verifySell,
+  retrieveLp,
 } from "../controllers/test.controller.js";
 
 export const testRoutes = Router();
@@ -33,3 +36,6 @@ testRoutes.post("/build-trade", buildTradeTransaction);
 testRoutes.post("/verify-trade", verifyTrade);
 testRoutes.post("/build-claim", buildClaimTransaction);
 testRoutes.post("/verify-claim", verifyClaim);
+testRoutes.post("/build-sell", buildSellTransaction);
+testRoutes.post("/verify-sell", verifySell);
+testRoutes.get("/retrieve-lp/:marketId", retrieveLp);

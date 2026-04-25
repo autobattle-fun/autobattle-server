@@ -6,7 +6,10 @@ import {
   SystemProgram,
   ComputeBudgetProgram,
 } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import {
+  TOKEN_PROGRAM_ID,
+  getAssociatedTokenAddressSync,
+} from "@solana/spl-token";
 import * as sb from "@switchboard-xyz/on-demand";
 import BN from "bn.js";
 import fs from "fs";
@@ -372,6 +375,9 @@ class SolanaService {
       ? new PublicKey(env.AUTO_TOKEN_ADDRESS)
       : crank; // Fallback for testing (see test.controller.js pattern)
 
+    // --- NEW: Derive the Crank's Token Account ---
+    const creatorTokenAccount = getAssociatedTokenAddressSync(autoMint, crank);
+
     const txSig = await this.predMarket.methods
       .createMarket(
         new BN(gameId),
@@ -383,6 +389,7 @@ class SolanaService {
         market: marketPda,
         vault: vaultPda,
         autoMint: autoMint,
+        creatorTokenAccount: creatorTokenAccount, // <-- NEW: Add the LP source
         authority: crank,
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,

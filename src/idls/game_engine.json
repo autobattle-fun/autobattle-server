@@ -288,9 +288,10 @@
           }
         },
         {
-          "name": "prediction_market_program",
+          "name": "authority",
+          "writable": true,
           "signer": true,
-          "address": "H76M7bbm6zwE464xkabF5MWbciwZqK9FmZYf4omaqnQH"
+          "address": "G2eWnQNwc1wrrgE78NcjmLBXXT9h2s9iUwAM1C8kpFzK"
         }
       ],
       "args": []
@@ -464,6 +465,21 @@
       "code": 6018,
       "name": "InvalidGameId",
       "msg": "Game ID does not match registry current_game_id"
+    },
+    {
+      "code": 6019,
+      "name": "InvalidRandomnessAccount",
+      "msg": "Account is not a valid Switchboard randomness account"
+    },
+    {
+      "code": 6020,
+      "name": "InvalidMarketAccount",
+      "msg": "Provided market account does not match the expected PDA"
+    },
+    {
+      "code": 6021,
+      "name": "UnauthorizedCrank",
+      "msg": "Signer is not the authorized crank for this operation"
     }
   ],
   "types": [
