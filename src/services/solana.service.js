@@ -413,6 +413,31 @@ class SolanaService {
     );
   }
 
+  async retrieveLp(marketPdaAddress, vaultPdaAddress) {
+    const crank = this.crankKeypair.publicKey;
+    
+    const autoMint = env.AUTO_TOKEN_ADDRESS
+      ? new PublicKey(env.AUTO_TOKEN_ADDRESS)
+      : crank; // Fallback for testing
+
+    const creatorTokenAccount = getAssociatedTokenAddressSync(autoMint, crank);
+
+    const txSig = await this.predMarket.methods
+      .withdrawLp()
+      .accounts({
+        market: new PublicKey(marketPdaAddress),
+        vault: new PublicKey(vaultPdaAddress),
+        adminTokenAccount: creatorTokenAccount,
+        authority: crank,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .signers([this.crankKeypair])
+      .rpc();
+      
+    logger.info("LP retrieved for market", { marketPdaAddress, txSig });
+    return txSig;
+  }
+
   // ── Helpers ─────────────────────────────────────────────────────
 
   _sleep(ms) {

@@ -203,10 +203,26 @@ export async function playRound(matchId) {
   let phase = parseGamePhase(gs.phase);
 
   const finishedRound = phase === "ENDED" ? gs.roundNumber : gs.roundNumber - 1;
+  
+  const roundMarketsToResolve = await prisma.market.findMany({
+    where: { matchId: match.id, targetRound: finishedRound, marketType: "MID_GAME", status: { not: "RESOLVED" } },
+  });
+
   await prisma.market.updateMany({
     where: { matchId: match.id, targetRound: finishedRound, marketType: "MID_GAME" },
     data: { status: "RESOLVED" },
   });
+
+  for (const m of roundMarketsToResolve) {
+    try {
+      await withRetry(
+        () => solanaService.retrieveLp(m.marketPda, m.vaultPda),
+        { label: "retrieveLp:round", matchId, gameId }
+      );
+    } catch (e) {
+      logger.error("Failed to retrieve LP for round market", { error: e.message, marketId: m.id });
+    }
+  }
 
   await syncOnChainState(gameId, gs, phase);
 
@@ -237,10 +253,26 @@ export async function playRound(matchId) {
     phase = parseGamePhase(gs.phase);
 
     const finishedRoundTb = phase === "ENDED" ? gs.roundNumber : gs.roundNumber - 1;
+    
+    const tbRoundMarketsToResolve = await prisma.market.findMany({
+      where: { matchId: match.id, targetRound: finishedRoundTb, marketType: "MID_GAME", status: { not: "RESOLVED" } },
+    });
+
     await prisma.market.updateMany({
       where: { matchId: match.id, targetRound: finishedRoundTb, marketType: "MID_GAME" },
       data: { status: "RESOLVED" },
     });
+
+    for (const m of tbRoundMarketsToResolve) {
+      try {
+        await withRetry(
+          () => solanaService.retrieveLp(m.marketPda, m.vaultPda),
+          { label: "retrieveLp:tb_round", matchId, gameId }
+        );
+      } catch (e) {
+        logger.error("Failed to retrieve LP for tiebreaker round market", { error: e.message, marketId: m.id });
+      }
+    }
 
     await syncOnChainState(gameId, gs, phase);
   }
@@ -427,10 +459,27 @@ async function syncMatchState(match, gs) {
 
   if (isEnded) {
     const winningOutcome = winner === "RED" ? "YES" : "NO";
+    
+    const mainMarketsToResolve = await prisma.market.findMany({
+      where: { matchId: match.id, marketType: "MAIN", status: { not: "RESOLVED" } },
+    });
+
     await prisma.market.updateMany({
       where: { matchId: match.id, marketType: "MAIN" },
       data: { status: "RESOLVED", winningOutcome, resolvesAt: new Date() },
     });
+    
+    for (const m of mainMarketsToResolve) {
+      try {
+        await withRetry(
+          () => solanaService.retrieveLp(m.marketPda, m.vaultPda),
+          { label: "retrieveLp:main", matchId: match.id, gameId: match.gameId }
+        );
+      } catch (e) {
+        logger.error("Failed to retrieve LP for main market", { error: e.message, marketId: m.id });
+      }
+    }
+    
     logger.info("Match ended", { matchId: match.id, gameId: match.gameId, winner });
   }
   return updatedMatch;

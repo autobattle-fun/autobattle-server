@@ -1,6 +1,6 @@
-import { startMatch, playUntilResolved } from "./src/services/game.service.js";
-import { prisma } from "./src/db/prisma.js";
-import { redis } from "./src/db/redis.js";
+import { startMatch, playUntilResolved } from "../services/game.service.js";
+import { prisma } from "../db/prisma.js";
+import { redis } from "../db/redis.js";
 
 async function runTest() {
   try {
