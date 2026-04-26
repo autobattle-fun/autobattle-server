@@ -143,3 +143,38 @@ export async function countdownController(request, response) {
     data: countdown,
   });
 }
+/**
+ * GET /games/:gameId/stats
+ * Get the live on-chain game stats.
+ */
+export async function getGameStatsController(request, response) {
+  const gameId = Number(request.params.gameId);
+  if (isNaN(gameId)) return response.status(400).json({ success: false, error: "Invalid gameId." });
+
+  try {
+    const { solanaService } = await import("../services/solana.service.js");
+    const gs = await solanaService.fetchGameState(gameId);
+
+    const currentPhase = Object.keys(gs.phase)[0];
+    const activePlayer = Object.keys(gs.activePlayer)[0];
+    const winner = gs.winner ? Object.keys(gs.winner)[0] : null;
+
+    const stats = {
+      gameId: gs.gameId.toNumber(),
+      phase: currentPhase,
+      roundNumber: gs.roundNumber,
+      activePlayer: activePlayer.toUpperCase(),
+      winner: winner ? winner.toUpperCase() : null,
+      agents: { red: gs.agentRed.toBase58(), blue: gs.agentBlue.toBase58() },
+      red: { hp: gs.p1Hp, score: gs.p1Score, aces: gs.p1Aces, hasStayed: gs.p1Stayed, lastCardDrawn: gs.p1LastCard },
+      blue: { hp: gs.p2Hp, score: gs.p2Score, aces: gs.p2Aces, hasStayed: gs.p2Stayed, lastCardDrawn: gs.p2LastCard },
+    };
+
+    return response.status(200).json({ success: true, data: stats });
+  } catch (error) {
+    if (error.message.includes("Account does not exist")) {
+      return response.status(404).json({ success: false, error: "Match not found on-chain." });
+    }
+    return response.status(500).json({ success: false, error: error.message });
+  }
+}

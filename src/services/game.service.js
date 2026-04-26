@@ -39,12 +39,21 @@ export async function startMatch() {
   );
 
   const closesAtUnix = Math.floor(Date.now() / 1000) + 3_153_600_000;
-  const question = `Will Red Win Match #${gameId}?`;
+  const questionMain = `Will Red Win Match #${gameId}?`;
+  const questionRound1 = `Will Red Win Round 1 of Match #${gameId}?`;
 
   await withRetry(
-    () => solanaService.createOnChainMarket(gameId, 0, question, closesAtUnix),
-    { label: "createOnChainMarket", gameId },
+    () => solanaService.createOnChainMarket(gameId, 0, questionMain, closesAtUnix),
+    { label: "createOnChainMarket:main", gameId },
   );
+
+  await withRetry(
+    () => solanaService.createOnChainMarket(gameId, 1, questionRound1, closesAtUnix),
+    { label: "createOnChainMarket:round1", gameId },
+  );
+
+  const [market1Pda] = deriveMarketPda(gameId, 1);
+  const [vault1Pda] = deriveVaultPda(gameId, 1);
 
   const result = await prisma.$transaction(async (tx) => {
     const match = await tx.match.create({
@@ -54,7 +63,7 @@ export async function startMatch() {
         llmRed: redModel, llmBlue: blueModel, status: "PENDING",
       },
     });
-    const market = await tx.market.create({
+    const mainMarket = await tx.market.create({
       data: {
         slug: `match-${gameId}-main`,
         title: `Match #${gameId}: ${redModel.split("/").pop()} vs ${blueModel.split("/").pop()}`,
@@ -64,7 +73,17 @@ export async function startMatch() {
         closesAt: new Date(closesAtUnix * 1000),
       },
     });
-    return { match, market };
+    const round1Market = await tx.market.create({
+      data: {
+        slug: `match-${gameId}-round-1`,
+        title: `Round 1 Winner: Red vs Blue`,
+        description: `Micro-market predicting the winner of Round 1.`,
+        matchId: match.id, marketPda: market1Pda.toBase58(), vaultPda: vault1Pda.toBase58(),
+        marketIndex: 1, marketType: "MID_GAME", targetRound: 1, status: "OPEN",
+        closesAt: new Date(closesAtUnix * 1000),
+      },
+    });
+    return { match, mainMarket, round1Market };
   });
 
   // Clear any existing break countdown since a new match is starting
@@ -100,11 +119,39 @@ export async function playRound(matchId) {
   }
 
   // Step 1: Deal initial cards
+  let gs = await solanaService.fetchGameState(gameId);
+  const currentRound = gs.roundNumber;
+
+  if (currentRound > 1) {
+    const existingMarket = await prisma.market.findFirst({
+      where: { match: { gameId }, targetRound: currentRound, marketType: "MID_GAME" },
+    });
+    if (!existingMarket) {
+      const closesAtUnix = Math.floor(Date.now() / 1000) + 3_153_600_000;
+      await withRetry(
+        () => solanaService.createOnChainMarket(gameId, currentRound, `Will Red Win Round ${currentRound} of Match #${gameId}?`, closesAtUnix),
+        { label: `createOnChainMarket:round${currentRound}`, gameId },
+      );
+      const [marketPdaDynamic] = deriveMarketPda(gameId, currentRound);
+      const [vaultPdaDynamic] = deriveVaultPda(gameId, currentRound);
+      await prisma.market.create({
+        data: {
+          slug: `match-${gameId}-round-${currentRound}`,
+          title: `Round ${currentRound} Winner: Red vs Blue`,
+          description: `Micro-market predicting the winner of Round ${currentRound}.`,
+          matchId: match.id, marketPda: marketPdaDynamic.toBase58(), vaultPda: vaultPdaDynamic.toBase58(),
+          marketIndex: currentRound, marketType: "MID_GAME", targetRound: currentRound, status: "OPEN",
+          closesAt: new Date(closesAtUnix * 1000),
+        },
+      });
+    }
+  }
+
   await withRetry(
     () => solanaService.vrfStep(gameId, ROLL_TYPE.INITIAL_DEAL),
     { label: "vrfStep:INITIAL_DEAL", matchId, gameId },
   );
-  let gs = await solanaService.fetchGameState(gameId);
+  gs = await solanaService.fetchGameState(gameId);
   let state = await getGameState(gameId);
   if (!state) state = await initGameState({ gameId, matchId, matchUuid });
 
@@ -151,19 +198,16 @@ export async function playRound(matchId) {
     redCard: riverRedCard, blueCard: riverBlueCard,
   });
 
-  // Step 4: Resolve round
-  try {
-    await withRetry(
-      () => solanaService.resolveRound(gameId, marketPda),
-      { label: "resolveRound", matchId, gameId },
-    );
-  } catch (error) {
-    if (!error.message?.includes("MarketAlreadyResolved") && !error.message?.includes("GameAlreadyEnded")) throw error;
-    logger.warn("Market/game already resolved, continuing", { gameId });
-  }
-
+  // Step 4: Resolve round (handled automatically by contract during FINAL_REVEAL)
   gs = await solanaService.fetchGameState(gameId);
   let phase = parseGamePhase(gs.phase);
+
+  const finishedRound = phase === "ENDED" ? gs.roundNumber : gs.roundNumber - 1;
+  await prisma.market.updateMany({
+    where: { matchId: match.id, targetRound: finishedRound, marketType: "MID_GAME" },
+    data: { status: "RESOLVED" },
+  });
+
   await syncOnChainState(gameId, gs, phase);
 
   // Step 5: Tiebreaker loop
@@ -189,17 +233,15 @@ export async function playRound(matchId) {
       redCard: tbRedCard, blueCard: tbBlueCard,
     });
 
-    try {
-      await withRetry(
-        () => solanaService.resolveRound(gameId, marketPda),
-        { label: "resolveRound:tiebreaker", matchId, gameId },
-      );
-    } catch (error) {
-      if (!error.message?.includes("MarketAlreadyResolved") && !error.message?.includes("GameAlreadyEnded")) throw error;
-    }
-
     gs = await solanaService.fetchGameState(gameId);
     phase = parseGamePhase(gs.phase);
+
+    const finishedRoundTb = phase === "ENDED" ? gs.roundNumber : gs.roundNumber - 1;
+    await prisma.market.updateMany({
+      where: { matchId: match.id, targetRound: finishedRoundTb, marketType: "MID_GAME" },
+      data: { status: "RESOLVED" },
+    });
+
     await syncOnChainState(gameId, gs, phase);
   }
 

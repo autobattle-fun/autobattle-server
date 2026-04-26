@@ -6,6 +6,7 @@ import {
   recordPredictionController,
   listPredictionsController,
   myPredictionsController,
+  getRoundMarketController,
 } from "../controllers/market.controller.js";
 import { requireAuth } from "../middlewares/auth-session.js";
 import { asyncHandler } from "../utils/async-handler.js";
@@ -19,6 +20,7 @@ marketRoutes.get(
   asyncHandler(myPredictionsController),
 );
 marketRoutes.get("/match/:matchId", asyncHandler(listMarketsController));
+marketRoutes.get("/game/:gameId/round/:roundNumber", asyncHandler(getRoundMarketController));
 
 // Parameterised routes
 marketRoutes.get("/:marketId", asyncHandler(getMarketController));

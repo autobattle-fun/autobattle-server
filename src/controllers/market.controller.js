@@ -11,6 +11,7 @@ import {
   recordPredictionSchema,
   listPredictionsSchema,
 } from "../utils/validators.js";
+import { prisma } from "../db/prisma.js";
 
 /**
  * GET /markets/:marketId
@@ -116,4 +117,41 @@ export async function myPredictionsController(request, response) {
     success: true,
     data: predictions,
   });
+}
+
+/**
+ * GET /markets/game/:gameId/round/:roundNumber
+ * Fetch a specific round's market.
+ */
+export async function getRoundMarketController(request, response) {
+  const gameId = Number(request.params.gameId);
+  const roundNumber = Number(request.params.roundNumber);
+
+  if (isNaN(gameId) || isNaN(roundNumber)) {
+    return response.status(400).json({ success: false, error: "Invalid parameters" });
+  }
+
+  try {
+    const market = await prisma.market.findFirst({
+      where: { match: { gameId: gameId }, marketType: "MID_GAME", targetRound: roundNumber },
+    });
+
+    if (!market) {
+      return response.status(404).json({ success: false, message: `No market found for Match #${gameId}, Round ${roundNumber}` });
+    }
+
+    return response.status(200).json({
+      success: true,
+      data: {
+        dbMarketId: market.id,
+        marketPda: market.marketPda,
+        marketIndex: market.marketIndex,
+        status: market.status,
+        title: market.title,
+      },
+    });
+  } catch (error) {
+    console.error("Fetch round market error:", error);
+    return response.status(500).json({ success: false, error: error.message });
+  }
 }

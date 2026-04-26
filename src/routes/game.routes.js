@@ -8,6 +8,7 @@ import {
   pauseMatchController,
   resumeMatchController,
   countdownController,
+  getGameStatsController,
 } from "../controllers/game.controller.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { requireAdminKey } from "../middlewares/admin-auth.js";
@@ -18,6 +19,7 @@ export const gameRoutes = Router();
 gameRoutes.get("/", asyncHandler(listMatchesController));
 gameRoutes.get("/active", asyncHandler(activeMatchController));
 gameRoutes.get("/countdown", asyncHandler(countdownController));
+gameRoutes.get("/:gameId/stats", asyncHandler(getGameStatsController));
 gameRoutes.get("/:matchId", asyncHandler(getMatchController));
 
 // Admin/crank endpoints (no auth middleware — secured by crank wallet on-chain)
