@@ -1146,3 +1146,111 @@ export async function retrieveLp(req, res) {
     return res.status(500).json({ success: false, error: error.message });
   }
 }
+
+export async function getMarketPrices(req, res) {
+  const { marketId } = req.params;
+
+  try {
+    // 1. Fetch Market from DB to get the PDA
+    const market = await prisma.market.findUnique({ where: { id: marketId } });
+    if (!market) {
+      return res
+        .status(404)
+        .json({ success: false, error: "Market not found in DB." });
+    }
+
+    // 2. Fetch the live on-chain state
+    const marketState = await solanaService.fetchMarketState(market.marketPda);
+
+    // 3. Extract supplies
+    const yesSupply = marketState.yesSupply.toNumber();
+    const noSupply = marketState.noSupply.toNumber();
+
+    // This MUST match your Rust contract's LMSR_B_SCALED constant exactly!
+    const LMSR_B_SCALED = 14_427_000_000;
+
+    // 4. Calculate prices using the overflow-safe LMSR Marginal Price formula
+    // p_yes = 1 / (1 + e^((n - y) / b))
+    const pYes = 1 / (1 + Math.exp((noSupply - yesSupply) / LMSR_B_SCALED));
+    const pNo = 1 - pYes; // The probabilities must always equal 1.0 (100%)
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        status: market.status,
+        yesPrice: parseFloat(pYes.toFixed(4)), // e.g., 0.5000 (50 cents)
+        noPrice: parseFloat(pNo.toFixed(4)),
+        yesSupplyRaw: yesSupply,
+        noSupplyRaw: noSupply,
+        totalVolumeRaw: marketState.totalVolume.toNumber(),
+      },
+    });
+  } catch (error) {
+    console.error("Fetch market prices error:", error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+export async function getUserPosition(req, res) {
+  const { marketId, userPubkey } = req.params;
+
+  if (!marketId || !userPubkey) {
+    return res
+      .status(400)
+      .json({ success: false, error: "Missing parameters." });
+  }
+
+  try {
+    const userPk = new PublicKey(userPubkey);
+
+    // 1. Fetch Market from DB to get the PDA
+    const market = await prisma.market.findUnique({ where: { id: marketId } });
+    if (!market) {
+      return res
+        .status(404)
+        .json({ success: false, error: "Market not found in DB." });
+    }
+
+    const marketPda = new PublicKey(market.marketPda);
+
+    // 2. Derive the UserPosition PDA
+    const [positionPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("position"), marketPda.toBuffer(), userPk.toBuffer()],
+      PRED_MARKET_PROGRAM_ID,
+    );
+
+    // 3. Fetch the position from the blockchain
+    try {
+      const position = await solanaService.fetchUserPosition(
+        positionPda.toBase58(),
+      );
+
+      // The shares are stored in 6 decimals, so we divide by 1,000,000 to get the human-readable number
+      const yesShares = position.yesShares.toNumber() / 1_000_000;
+      const noShares = position.noShares.toNumber() / 1_000_000;
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          yesShares: yesShares,
+          noShares: noShares,
+          hasClaimed: position.claimed,
+        },
+      });
+    } catch (e) {
+      // If Anchor throws an "Account does not exist" error, it just means
+      // the user has never traded in this market before. Their balance is 0.
+      return res.status(200).json({
+        success: true,
+        data: {
+          yesShares: 0,
+          noShares: 0,
+          hasClaimed: false,
+        },
+      });
+    }
+  } catch (error) {
+    console.error("Fetch user position error:", error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}

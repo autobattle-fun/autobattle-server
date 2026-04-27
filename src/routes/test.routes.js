@@ -15,6 +15,8 @@ import {
   buildSellTransaction,
   verifySell,
   retrieveLp,
+  getMarketPrices,
+  getUserPosition,
 } from "../controllers/test.controller.js";
 
 export const testRoutes = Router();
@@ -39,3 +41,6 @@ testRoutes.post("/verify-claim", verifyClaim);
 testRoutes.post("/build-sell", buildSellTransaction);
 testRoutes.post("/verify-sell", verifySell);
 testRoutes.get("/retrieve-lp/:marketId", retrieveLp);
+
+testRoutes.get("/prices/:marketId", getMarketPrices);
+testRoutes.get("/user-position/:marketId/:userPubkey", getUserPosition);
