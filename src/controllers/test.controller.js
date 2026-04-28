@@ -12,6 +12,7 @@ import {
 import { prisma } from "../db/prisma.js";
 import { ROLL_TYPE } from "../services/solana.service.js";
 import { randomUUID } from "crypto";
+import { wsEvents } from "../lib/websocket.js";
 
 // Optional: Put your $AUTO token mint address in your .env
 // For testing, we can default to a placeholder if it's missing
@@ -666,6 +667,145 @@ export async function buildTradeTransaction(req, res) {
     return res.status(500).json({ success: false, error: error.message });
   }
 }
+
+// --- WEBSOCKET EVENT TESTING ---
+
+export const fireEventMethods = {
+  fireMatchCreated: async (req, res) => {
+    try {
+      const match = {
+        id: "dummy-match-id-123",
+        gameId: 999,
+        matchUuid: "dummy-uuid",
+        llmRed: "meta-llama/llama-3-8b",
+        llmBlue: "mistralai/mixtral-8x7b",
+        agentRed: "RedAgentAddress",
+        agentBlue: "BlueAgentAddress"
+      };
+      wsEvents.matchCreated(match);
+      res.json({ success: true, message: "Fired matchCreated" });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  },
+  fireRoundStarted: async (req, res) => {
+    try {
+      wsEvents.roundStarted("dummy-match-id-123", { roundNumber: 1, gameId: 999, redHp: 100, blueHp: 100 });
+      res.json({ success: true, message: "Fired roundStarted" });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  },
+  fireCardsDealt: async (req, res) => {
+    try {
+      wsEvents.cardsDealt("dummy-match-id-123", { redScore: 10, blueScore: 8, redCard: { label: "10 of Hearts", value: 10 }, blueCard: { label: "8 of Spades", value: 8 } });
+      res.json({ success: true, message: "Fired cardsDealt" });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  },
+  fireAgentDecision: async (req, res) => {
+    try {
+      wsEvents.agentDecision("dummy-match-id-123", { player: "RED", action: "HIT", reason: "I need more points", model: "llama-3", scoreBefore: 10, scoreAfter: 15, cardDealt: { label: "5 of Clubs", value: 5 } });
+      res.json({ success: true, message: "Fired agentDecision" });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  },
+  fireRiverRevealed: async (req, res) => {
+    try {
+      wsEvents.riverRevealed("dummy-match-id-123", { redScore: 18, blueScore: 20, redCard: { label: "3 of Diamonds", value: 3 }, blueCard: { label: "Jack of Spades", value: 10 } });
+      res.json({ success: true, message: "Fired riverRevealed" });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  },
+  fireRoundResolved: async (req, res) => {
+    try {
+      wsEvents.roundResolved("dummy-match-id-123", { roundNumber: 1, redHp: 80, blueHp: 100, redScore: 18, blueScore: 20, damageDealt: 20, roundWinner: "BLUE" });
+      res.json({ success: true, message: "Fired roundResolved" });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  },
+  fireTiebreakerStarted: async (req, res) => {
+    try {
+      wsEvents.tiebreakerStarted("dummy-match-id-123", { roundNumber: 1, redScore: 20, blueScore: 20 });
+      res.json({ success: true, message: "Fired tiebreakerStarted" });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  },
+  fireTiebreakerResolved: async (req, res) => {
+    try {
+      wsEvents.tiebreakerResolved("dummy-match-id-123", { redScore: 21, blueScore: 19, redCard: { label: "Ace of Spades", value: 1 }, blueCard: { label: "9 of Hearts", value: 9 } });
+      res.json({ success: true, message: "Fired tiebreakerResolved" });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  },
+  fireHpUpdated: async (req, res) => {
+    try {
+      wsEvents.hpUpdated("dummy-match-id-123", { redHp: 80, blueHp: 100 });
+      res.json({ success: true, message: "Fired hpUpdated" });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  },
+  fireGameStats: async (req, res) => {
+    try {
+      wsEvents.gameStats("dummy-match-id-123", { gameId: 999, phase: "active", roundNumber: 1, redHp: 80, blueHp: 100 });
+      res.json({ success: true, message: "Fired gameStats" });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  },
+  fireMatchEnded: async (req, res) => {
+    try {
+      wsEvents.matchEnded("dummy-match-id-123", { winner: "BLUE", gameId: 999, totalRounds: 3, llmRed: "llama-3", llmBlue: "mixtral" });
+      res.json({ success: true, message: "Fired matchEnded" });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  },
+  fireGamePaused: async (req, res) => {
+    try {
+      wsEvents.gamePaused("dummy-match-id-123", { reason: "Manual intervention", error: "RPC timeout" });
+      res.json({ success: true, message: "Fired gamePaused" });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  },
+  fireGameResumed: async (req, res) => {
+    try {
+      wsEvents.gameResumed("dummy-match-id-123");
+      res.json({ success: true, message: "Fired gameResumed" });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  },
+  fireBreakCountdown: async (req, res) => {
+    try {
+      wsEvents.breakCountdown({ remainingSeconds: 120, nextStartAt: new Date(Date.now() + 120000).toISOString() });
+      res.json({ success: true, message: "Fired breakCountdown" });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  },
+  fireBreakPreparing: async (req, res) => {
+    try {
+      wsEvents.breakPreparing({ nextMatchAt: new Date(Date.now() + 60000).toISOString() });
+      res.json({ success: true, message: "Fired breakPreparing" });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  },
+  fireMarketPrices: async (req, res) => {
+    try {
+      wsEvents.marketPrices("dummy-market-id-456", { YES: 0.65, NO: 0.35 });
+      res.json({ success: true, message: "Fired marketPrices" });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  },
+  fireLogBroadcast: async (req, res) => {
+    try {
+      wsEvents.logBroadcast("This is a dummy log message for testing", "info");
+      res.json({ success: true, message: "Fired logBroadcast" });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  },
+  firePong: async (req, res) => {
+    try {
+      wsEvents.pong({
+        latency: 42,
+        gameState: {
+          matchId: "dummy-match-id-123",
+          gameId: 999,
+          status: "ACTIVE",
+          roundNumber: 1,
+          redHp: 80,
+          blueHp: 100,
+          llmRed: "meta-llama/llama-3-8b",
+          llmBlue: "mistralai/mixtral-8x7b",
+          phase: "active",
+          red: { score: 18, hasStayed: false },
+          blue: { score: 20, hasStayed: true }
+        },
+        countdown: null,
+        serverTimestamp: Date.now()
+      });
+      res.json({ success: true, message: "Fired pong" });
+    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  }
+};
 
 export async function verifyTrade(req, res) {
   const { signature, marketId, userPubkey, side, amountTokens } = req.body;

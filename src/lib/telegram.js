@@ -92,6 +92,9 @@ const EVENT_EMOJI = {
   "game:paused": "⏸️",
   "game:resumed": "▶️",
   "game:error": "🚨",
+  "break:preparing": "⏳",
+  "market:prices": "📈",
+  "log:broadcast": "📝",
 };
 
 /**
@@ -147,6 +150,18 @@ export async function notifyEvent(eventType, data, matchId) {
 
     case "game:resumed":
       message += `✅ Match resumed`;
+      break;
+
+    case "break:preparing":
+      message += `Next match at: ${data.nextMatchAt}`;
+      break;
+
+    case "market:prices":
+      message += `Market Prices Updated:\n${formatDataCompact(data)}`;
+      break;
+
+    case "log:broadcast":
+      message += `[${data.level ? data.level.toUpperCase() : "INFO"}] ${data.message}`;
       break;
 
     default:
@@ -223,6 +238,7 @@ async function setBotCommands() {
             { command: "pause", description: "Pause the active match" },
             { command: "resume", description: "Resume a paused match" },
             { command: "countdown", description: "Get break countdown" },
+            { command: "ping", description: "Simulate a ping/pong response" },
             { command: "help", description: "Show available commands" },
           ],
         }),
@@ -302,6 +318,9 @@ async function handleUpdate(update) {
       case "/countdown":
         await handleCountdownCommand(chatId);
         break;
+      case "/ping":
+        await handlePingCommand(chatId);
+        break;
       case "/help":
         await handleHelpCommand(chatId);
         break;
@@ -324,10 +343,10 @@ async function handleStartCommand(chatId, from) {
   await sendMessage(
     chatId,
     `👋 Welcome, ${name}!\n\n` +
-      `You are now registered for AutoBattle notifications.\n` +
-      `Your Chat ID: <code>${chatId}</code>\n\n` +
-      `Add this ID to TELEGRAM_CHAT_IDS in your .env to receive all game events.\n\n` +
-      `Use /help to see available commands.`,
+    `You are now registered for AutoBattle notifications.\n` +
+    `Your Chat ID: <code>${chatId}</code>\n\n` +
+    `Add this ID to TELEGRAM_CHAT_IDS in your .env to receive all game events.\n\n` +
+    `Use /help to see available commands.`,
   );
 }
 
@@ -343,8 +362,8 @@ async function handleStatusCommand(chatId) {
       await sendMessage(
         chatId,
         `⏳ <b>No active match</b>\n\n` +
-          `Next match starts in: <b>${countdown.remainingSeconds}s</b>\n` +
-          `Start time: ${countdown.nextStartAt}`,
+        `Next match starts in: <b>${countdown.remainingSeconds}s</b>\n` +
+        `Start time: ${countdown.nextStartAt}`,
       );
     } else {
       await sendMessage(chatId, "💤 No active match and no break countdown.");
@@ -357,9 +376,9 @@ async function handleStatusCommand(chatId) {
   await sendMessage(
     chatId,
     `${statusEmoji} <b>Match #${activeMatch.gameId}</b> — ${activeMatch.status}\n\n` +
-      `Round: ${activeMatch.roundNumber}\n` +
-      `❤️ Red: ${activeMatch.redHp} HP | 💙 Blue: ${activeMatch.blueHp} HP\n` +
-      `🔴 ${activeMatch.llmRed}\n🔵 ${activeMatch.llmBlue}`,
+    `Round: ${activeMatch.roundNumber}\n` +
+    `❤️ Red: ${activeMatch.redHp} HP | 💙 Blue: ${activeMatch.blueHp} HP\n` +
+    `🔴 ${activeMatch.llmRed}\n🔵 ${activeMatch.llmBlue}`,
   );
 }
 
@@ -382,7 +401,7 @@ async function handlePauseCommand(chatId) {
   await sendMessage(
     chatId,
     `⏸️ <b>Match #${activeMatch.gameId} PAUSED</b>\n` +
-      `Use /resume to continue.`,
+    `Use /resume to continue.`,
   );
 }
 
@@ -405,7 +424,7 @@ async function handleResumeCommand(chatId) {
   await sendMessage(
     chatId,
     `▶️ <b>Match #${pausedMatch.gameId} RESUMED</b>\n` +
-      `The crank will pick it up on the next cycle.`,
+    `The crank will pick it up on the next cycle.`,
   );
 }
 
@@ -420,8 +439,22 @@ async function handleCountdownCommand(chatId) {
   await sendMessage(
     chatId,
     `⏳ <b>Break Countdown</b>\n\n` +
-      `Remaining: <b>${countdown.remainingSeconds}s</b>\n` +
-      `Next match at: ${countdown.nextStartAt}`,
+    `Remaining: <b>${countdown.remainingSeconds}s</b>\n` +
+    `Next match at: ${countdown.nextStartAt}`,
+  );
+}
+
+async function handlePingCommand(chatId) {
+  // Simulates a ping response with dummy data
+  await sendMessage(
+    chatId,
+    `🏓 <b>PONG (Simulated)</b>\n\n` +
+    `Latency: <b>42ms</b>\n` +
+    `Match: <code>dummy-match-id-123</code>\n` +
+    `Status: <b>ACTIVE</b>\n` +
+    `Round: 1\n` +
+    `❤️ Red HP: 80 | 💙 Blue HP: 100\n` +
+    `Server Time: ${new Date().toISOString()}`
   );
 }
 
@@ -429,12 +462,13 @@ async function handleHelpCommand(chatId) {
   await sendMessage(
     chatId,
     `🤖 <b>AutoBattle Bot Commands</b>\n\n` +
-      `/start — Register for notifications\n` +
-      `/status — Current game status\n` +
-      `/pause — Pause the active match\n` +
-      `/resume — Resume a paused match\n` +
-      `/countdown — Break countdown timer\n` +
-      `/help — Show this message`,
+    `/start — Register for notifications\n` +
+    `/status — Current game status\n` +
+    `/pause — Pause the active match\n` +
+    `/resume — Resume a paused match\n` +
+    `/countdown — Break countdown timer\n` +
+    `/ping — Simulate a ping/pong response\n` +
+    `/help — Show this message`,
   );
 }
 

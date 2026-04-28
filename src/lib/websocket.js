@@ -179,7 +179,7 @@ export function broadcast(eventType, payload, matchId) {
   }
 
   // Forward to Telegram (fire-and-forget, never block the broadcast)
-  notifyEvent(eventType, payload, matchId).catch(() => {});
+  notifyEvent(eventType, payload, matchId).catch(() => { });
 }
 
 // ── Typed Event Helpers ─────────────────────────────────────────────
@@ -292,7 +292,7 @@ export const wsEvents = {
   breakCountdown({ remainingSeconds, nextStartAt }) {
     broadcast("break:countdown", { remainingSeconds, nextStartAt });
   },
-  
+
   breakPreparing({ nextMatchAt }) {
     broadcast("break:preparing", { nextMatchAt });
   },
@@ -303,6 +303,14 @@ export const wsEvents = {
 
   logBroadcast(message, level = "info") {
     broadcast("log:broadcast", { message, level });
+  },
+
+  pong(data) {
+    if (!wss) return;
+    const message = JSON.stringify({ type: "pong", ...data });
+    for (const client of wss.clients) {
+      if (client.readyState === 1) client.send(message);
+    }
   },
 };
 
