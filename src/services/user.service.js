@@ -69,3 +69,24 @@ export async function updateUserAuthProfile({
     data,
   });
 }
+
+export async function getUserHistory(userId) {
+  return prisma.prediction.findMany({
+    where: { userId },
+    include: {
+      market: {
+        include: {
+          match: {
+            include: {
+              rounds: {
+                orderBy: { roundNumber: "asc" }
+              }
+            }
+          }
+        }
+      }
+    },
+    orderBy: { createdAt: "desc" }
+  });
+}
+

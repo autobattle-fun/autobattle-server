@@ -1,4 +1,6 @@
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { getUserHistory } from "../services/user.service.js";
+
 
 const connection = new Connection(process.env.SOLANA_RPC_URL, "confirmed");
 
@@ -38,3 +40,16 @@ export async function meController(request, response) {
     },
   });
 }
+
+export async function historyController(request, response) {
+  if (!request.auth?.user) {
+    return response.status(401).json({ error: "Unauthorized" });
+  }
+
+  const history = await getUserHistory(request.auth.user.id);
+  return response.json({
+    success: true,
+    data: history,
+  });
+}
+

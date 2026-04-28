@@ -292,4 +292,17 @@ export const wsEvents = {
   breakCountdown({ remainingSeconds, nextStartAt }) {
     broadcast("break:countdown", { remainingSeconds, nextStartAt });
   },
+  
+  breakPreparing({ nextMatchAt }) {
+    broadcast("break:preparing", { nextMatchAt });
+  },
+
+  marketPrices(marketId, prices) {
+    broadcast("market:prices", prices, marketId);
+  },
+
+  logBroadcast(message, level = "info") {
+    broadcast("log:broadcast", { message, level });
+  },
 };
+

@@ -4,7 +4,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -18,8 +17,13 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   lastLoginAt   DateTime?
+  totalPredictions Int @default(0)
+  totalEarnings Decimal @default(0) @db.Decimal(20, 8)
+  totalWins Int @default(0)
 
   predictions Prediction[]
+  comments Comment[]
+  commentLikes CommentLike[]
 }
 
 model Match {
@@ -129,6 +133,7 @@ model Market {
   predictions Prediction[]
 
   @@index([matchId])
+  comments Comment[]
 }
 
 model Prediction {
@@ -137,6 +142,7 @@ model Prediction {
   marketId String
   side     PredictionSide // YES = Red, NO = Blue
   amount   Decimal        @db.Decimal(20, 8)
+  shareAmount Decimal     @db.Decimal(20, 8)
 
   // SOLANA INTEGRATION FIELDS
   positionPda String  @unique // The on-chain userPosition PDA
@@ -148,6 +154,35 @@ model Prediction {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([marketId])
+  @@index([userId])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  userId    String
+  marketId  String
+  comment   String
+  likes     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([marketId])
+  @@index([userId])
+  commentLikes CommentLike[]
+}
+
+model CommentLike {
+  id        String   @id @default(cuid())
+  userId    String
+  commentId String
+  createdAt DateTime @default(now())
+
+  comment Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([commentId])
   @@index([userId])
 }
 
