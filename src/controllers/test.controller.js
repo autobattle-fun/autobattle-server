@@ -688,7 +688,7 @@ export const fireEventMethods = {
   },
   fireRoundStarted: async (req, res) => {
     try {
-      wsEvents.roundStarted("dummy-match-id-123", { roundNumber: 1, gameId: 999, redHp: 100, blueHp: 100 });
+      wsEvents.roundStarted("dummy-match-id-123", { roundNumber: 1, gameId: 999, redHp: 10, blueHp: 10 });
       res.json({ success: true, message: "Fired roundStarted" });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
   },
@@ -712,7 +712,7 @@ export const fireEventMethods = {
   },
   fireRoundResolved: async (req, res) => {
     try {
-      wsEvents.roundResolved("dummy-match-id-123", { roundNumber: 1, redHp: 80, blueHp: 100, redScore: 18, blueScore: 20, damageDealt: 20, roundWinner: "BLUE" });
+      wsEvents.roundResolved("dummy-match-id-123", { roundNumber: 1, redHp: 8, blueHp: 10, redScore: 18, blueScore: 20, damageDealt: 2, roundWinner: "BLUE" });
       res.json({ success: true, message: "Fired roundResolved" });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
   },
@@ -730,13 +730,13 @@ export const fireEventMethods = {
   },
   fireHpUpdated: async (req, res) => {
     try {
-      wsEvents.hpUpdated("dummy-match-id-123", { redHp: 80, blueHp: 100 });
+      wsEvents.hpUpdated("dummy-match-id-123", { redHp: 8, blueHp: 10 });
       res.json({ success: true, message: "Fired hpUpdated" });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
   },
   fireGameStats: async (req, res) => {
     try {
-      wsEvents.gameStats("dummy-match-id-123", { gameId: 999, phase: "active", roundNumber: 1, redHp: 80, blueHp: 100 });
+      wsEvents.gameStats("dummy-match-id-123", { gameId: 999, phase: "active", roundNumber: 1, redHp: 8, blueHp: 10 });
       res.json({ success: true, message: "Fired gameStats" });
     } catch (e) { res.status(500).json({ success: false, error: e.message }); }
   },
@@ -791,8 +791,8 @@ export const fireEventMethods = {
           gameId: 999,
           status: "ACTIVE",
           roundNumber: 1,
-          redHp: 80,
-          blueHp: 100,
+          redHp: 8,
+          blueHp: 10,
           llmRed: "meta-llama/llama-3-8b",
           llmBlue: "mistralai/mixtral-8x7b",
           phase: "active",
