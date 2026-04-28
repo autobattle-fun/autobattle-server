@@ -1,4 +1,5 @@
-import { WebSocketServer } from "ws";
+import { Server as SocketIOServer } from "socket.io";
+import { env } from "../config/env.js";
 import { logger } from "./logger.js";
 import { prisma } from "../db/prisma.js";
 import { getGameState, getMatchBreakCountdown } from "./game-state-store.js";
@@ -9,61 +10,73 @@ import { notifyEvent } from "./telegram.js";
 // Provides real-time game updates to connected frontend clients.
 // Clients can subscribe to specific matches or receive all events.
 
-let wss = null;
+let io = null;
 
 /**
  * Initialize the WebSocket server on top of an existing HTTP server.
  */
 export function initWebSocket(httpServer) {
-  wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+  io = new SocketIOServer(httpServer, {
+    path: "/ws",
+    cors: {
+      origin: env.CLIENT_ORIGIN,
+      credentials: true,
+      allowedHeaders: ["Content-Type", "Authorization", "x-request-id"],
+    },
+  });
 
-  wss.on("connection", (ws, req) => {
+  io.on("connection", (socket) => {
     const clientIp =
-      req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+      socket.handshake.headers["x-forwarded-for"] || socket.handshake.address;
     logger.info("WebSocket client connected", { clientIp });
 
+    // Join the global room by default to receive broadcasts not tied to a match
+    socket.join("global");
+
     // Clients can subscribe to a specific match by sending:
-    // { "type": "subscribe", "matchId": "cuid..." }
-    ws.subscribedMatchId = null;
+    // e.g. socket.emit("subscribe", { matchId: "cuid..." })
+    socket.subscribedMatchId = null;
 
-    ws.on("message", async (raw) => {
+    socket.on("subscribe", (message) => {
       try {
-        const message = JSON.parse(raw.toString());
-
-        if (message.type === "subscribe" && message.matchId) {
-          ws.subscribedMatchId = message.matchId;
-          ws.send(
-            JSON.stringify({
-              type: "subscribed",
-              matchId: message.matchId,
-            }),
-          );
+        if (message && message.matchId) {
+          if (socket.subscribedMatchId) {
+            socket.leave(socket.subscribedMatchId);
+          }
+          socket.leave("global");
+          socket.join(message.matchId);
+          socket.subscribedMatchId = message.matchId;
+          
+          socket.emit("subscribed", { matchId: message.matchId });
           logger.info("Client subscribed to match", {
             matchId: message.matchId,
           });
-        } else if (message.type === "ping") {
-          await handlePing(ws, message);
         }
       } catch {
         // Ignore malformed messages
       }
     });
 
-    ws.on("close", () => {
+    socket.on("ping", async (message) => {
+      try {
+        await handlePing(socket, message || {});
+      } catch {
+        // Ignore ping errors
+      }
+    });
+
+    socket.on("disconnect", () => {
       logger.info("WebSocket client disconnected", { clientIp });
     });
 
-    ws.on("error", (error) => {
+    socket.on("error", (error) => {
       logger.error("WebSocket client error", { error: error.message });
     });
 
     // Send a welcome message
-    ws.send(
-      JSON.stringify({
-        type: "connected",
-        message: "AutoBattle WebSocket connected",
-      }),
-    );
+    socket.emit("connected", {
+      message: "AutoBattle WebSocket connected",
+    });
   });
 
   logger.info("WebSocket server initialized", { path: "/ws" });
@@ -74,10 +87,10 @@ export function initWebSocket(httpServer) {
 /**
  * Handle a client ping and respond with game state + latency.
  *
- * Client sends:  { "type": "ping", "timestamp": 1714000000000 }
- * Server sends:  { "type": "pong", "latency": 42, "gameState": {...}, "countdown": {...}, "serverTimestamp": ... }
+ * Client sends:  socket.emit("ping", { "timestamp": 1714000000000 })
+ * Server sends:  socket.emit("pong", { "latency": 42, "gameState": {...}, "countdown": {...}, "serverTimestamp": ... })
  */
-async function handlePing(ws, message) {
+async function handlePing(socket, message) {
   const serverTimestamp = Date.now();
   const clientTimestamp = message.timestamp || serverTimestamp;
   const latency = Math.max(0, serverTimestamp - clientTimestamp);
@@ -131,15 +144,12 @@ async function handlePing(ws, message) {
     logger.warn("Error building pong response", { error: error.message });
   }
 
-  ws.send(
-    JSON.stringify({
-      type: "pong",
-      latency,
-      gameState,
-      countdown,
-      serverTimestamp,
-    }),
-  );
+  socket.emit("pong", {
+    latency,
+    gameState,
+    countdown,
+    serverTimestamp,
+  });
 }
 
 // ── Event Broadcasting ──────────────────────────────────────────────
@@ -149,34 +159,24 @@ async function handlePing(ws, message) {
  * Also forwards the event as a Telegram notification.
  */
 export function broadcast(eventType, payload, matchId) {
-  if (!wss) return;
+  if (!io) return;
 
-  const message = JSON.stringify({
+  const dataEnvelope = {
     type: eventType,
     matchId: matchId || null,
     data: payload,
     timestamp: new Date().toISOString(),
-  });
+  };
 
-  let sent = 0;
-
-  for (const client of wss.clients) {
-    if (client.readyState !== 1) continue; // WebSocket.OPEN = 1
-
-    const isSubscribed =
-      !matchId ||
-      !client.subscribedMatchId ||
-      client.subscribedMatchId === matchId;
-
-    if (isSubscribed) {
-      client.send(message);
-      sent++;
-    }
+  if (matchId) {
+    // Send to specific match room and the global room
+    io.to(matchId).to("global").emit(eventType, dataEnvelope);
+  } else {
+    // Send to everyone 
+    io.emit(eventType, dataEnvelope);
   }
 
-  if (sent > 0) {
-    logger.info("WebSocket broadcast", { eventType, matchId, clients: sent });
-  }
+  logger.info("WebSocket broadcast", { eventType, matchId });
 
   // Forward to Telegram (fire-and-forget, never block the broadcast)
   notifyEvent(eventType, payload, matchId).catch(() => { });
@@ -306,11 +306,8 @@ export const wsEvents = {
   },
 
   pong(data) {
-    if (!wss) return;
-    const message = JSON.stringify({ type: "pong", ...data });
-    for (const client of wss.clients) {
-      if (client.readyState === 1) client.send(message);
-    }
+    if (!io) return;
+    io.emit("pong", { type: "pong", ...data });
   },
 };
 
