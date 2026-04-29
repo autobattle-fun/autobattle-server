@@ -151,13 +151,28 @@ async function crankCycle() {
  */
 async function maybeAutoStartMatch() {
   try {
-    // Check if there are any active, pending, or paused matches
+    // Check if there are any active, matchmaking, or paused matches
     const existingMatch = await prisma.match.findFirst({
-      where: { status: { in: ["ACTIVE", "PENDING", "PAUSED"] } },
+      where: { status: { in: ["ACTIVE", "MATCHMAKING", "PAUSED"] } },
     });
 
     if (existingMatch) {
-      // A match is in progress or paused — don't start a new one
+      if (existingMatch.status === "MATCHMAKING") {
+        const countdown = await getMatchBreakCountdown();
+        if (countdown.isBreak && countdown.phase === "MATCHMAKING") {
+          wsEvents.breakCountdown({
+            remainingSeconds: countdown.remainingSeconds,
+            nextStartAt: countdown.nextStartAt,
+            phase: countdown.phase,
+          });
+          return;
+        } else {
+          // Matchmaking expired -> switch to ACTIVE
+          await prisma.match.update({ where: { id: existingMatch.id }, data: { status: "ACTIVE" } });
+          logger.info("Matchmaking phase expired — Match is now ACTIVE", { matchId: existingMatch.id });
+          await clearMatchBreakCountdown();
+        }
+      }
       return;
     }
 
@@ -169,12 +184,13 @@ async function maybeAutoStartMatch() {
       wsEvents.breakCountdown({
         remainingSeconds: countdown.remainingSeconds,
         nextStartAt: countdown.nextStartAt,
+        phase: countdown.phase,
       });
       return;
     }
 
     // No active match, no break → start a new match
-    logger.info("Break expired — auto-starting new match");
+    logger.info("Preparation phase expired — auto-starting new match (entering MATCHMAKING)");
     await clearMatchBreakCountdown();
     await startMatch();
   } catch (error) {

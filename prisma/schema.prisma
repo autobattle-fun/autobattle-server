@@ -35,8 +35,10 @@ model Match {
   agentBlue String // Pubkey of the Blue Agent
   llmRed    String // OpenRouter model name for Red agent
   llmBlue   String // OpenRouter model name for Blue agent
+  redName   String @default("Red")
+  blueName  String @default("Blue")
 
-  status      MatchStatus @default(PENDING)
+  status      MatchStatus @default(MATCHMAKING)
   roundNumber Int         @default(1)
   redHp       Int         @default(10)
   blueHp      Int         @default(10)
@@ -142,7 +144,7 @@ model Prediction {
   marketId String
   side     PredictionSide // YES = Red, NO = Blue
   amount   Decimal        @db.Decimal(20, 8)
-  shareAmount Decimal     @db.Decimal(20, 8)
+  shareAmount Decimal     @default(0) @db.Decimal(20, 8)
 
   // SOLANA INTEGRATION FIELDS
   positionPda String  @unique // The on-chain userPosition PDA
@@ -195,10 +197,11 @@ enum MarketStatus {
 }
 
 enum MatchStatus {
-  PENDING // Market is OPEN, waiting for initial deal
+  MATCHMAKING // Market is OPEN, waiting for initial deal (5-min matchmaking phase)
   ACTIVE // Match is fighting / dealing cards
   PAUSED // Halted due to critical transaction failure — awaiting dev intervention
   RESOLVED // HP hit 0, Game over
+  PENDING // Deprecated: use MATCHMAKING
 }
 
 enum PredictionSide {

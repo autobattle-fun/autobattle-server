@@ -105,6 +105,7 @@ export async function initGameState({ gameId, matchId, matchUuid }) {
     pastRounds: [],
     moves: [],
     moveCounter: 0,
+    playerStatus: { red: "WAITING", blue: "WAITING" },
   };
 
   await redis.setex(stateKey(gameId), STATE_TTL, JSON.stringify(state));
@@ -284,37 +285,54 @@ export function formatCardHistory(state) {
 const BREAK_KEY = "autobattle:match:next_start_at";
 
 /**
- * Set a countdown for the next match start (stored as Unix timestamp in Redis).
- * @param {number} nextStartAtUnix - Unix timestamp (seconds) when the next match should start
+ * Set a countdown for the next match start (stored as JSON in Redis).
+ * @param {number} nextStartAtUnix - Unix timestamp (seconds) when the phase ends
+ * @param {string} phase - The phase ("PREPARING" or "MATCHMAKING")
  */
-export async function setMatchBreakCountdown(nextStartAtUnix) {
+export async function setMatchBreakCountdown(nextStartAtUnix, phase = "MATCHMAKING") {
   const ttl = Math.max(nextStartAtUnix - Math.floor(Date.now() / 1000), 1);
-  await redis.setex(BREAK_KEY, ttl + 60, String(nextStartAtUnix)); // +60s buffer for reading after expiry
-  logger.info("Match break countdown set", { nextStartAt: new Date(nextStartAtUnix * 1000).toISOString(), ttlSeconds: ttl });
+  const data = JSON.stringify({ nextStartAtUnix, phase });
+  await redis.setex(BREAK_KEY, ttl + 60, data); // +60s buffer for reading after expiry
+  logger.info("Match break countdown set", { nextStartAt: new Date(nextStartAtUnix * 1000).toISOString(), ttlSeconds: ttl, phase });
 }
 
 /**
  * Get the current match break countdown status.
- * @returns {{ isBreak: boolean, remainingSeconds: number, nextStartAt: string | null }}
+ * @returns {{ isBreak: boolean, remainingSeconds: number, nextStartAt: string | null, phase: string | null }}
  */
 export async function getMatchBreakCountdown() {
   const raw = await redis.get(BREAK_KEY);
   if (!raw) {
-    return { isBreak: false, remainingSeconds: 0, nextStartAt: null };
+    return { isBreak: false, remainingSeconds: 0, nextStartAt: null, phase: null };
   }
 
-  const nextStartAtUnix = parseInt(raw, 10);
+  let nextStartAtUnix;
+  let phase = "MATCHMAKING";
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed.nextStartAtUnix) {
+      nextStartAtUnix = parsed.nextStartAtUnix;
+      phase = parsed.phase || "MATCHMAKING";
+    } else {
+      nextStartAtUnix = parseInt(raw, 10);
+    }
+  } catch {
+    nextStartAtUnix = parseInt(raw, 10);
+  }
+
   const nowUnix = Math.floor(Date.now() / 1000);
   const remaining = nextStartAtUnix - nowUnix;
 
   if (remaining <= 0) {
-    return { isBreak: false, remainingSeconds: 0, nextStartAt: null };
+    return { isBreak: false, remainingSeconds: 0, nextStartAt: null, phase: null };
   }
 
   return {
     isBreak: true,
     remainingSeconds: remaining,
     nextStartAt: new Date(nextStartAtUnix * 1000).toISOString(),
+    phase,
   };
 }
 

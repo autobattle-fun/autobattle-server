@@ -8,7 +8,7 @@ import { wsEvents } from "../lib/websocket.js";
 import { withRetry } from "../lib/transaction-retry.js";
 import { env } from "../config/env.js";
 import {
-  initGameState, getGameState, syncOnChainState,
+  initGameState, getGameState, updateGameState, syncOnChainState,
   recordCardDealt, recordRiverCards, recordTiebreakerCards,
   recordMove, archiveRound, deleteGameState,
   inferCard, formatCardHistory,
@@ -18,6 +18,12 @@ import {
   deriveGamePda, deriveMarketPda, deriveVaultPda,
   parseGamePhase, parseColor,
 } from "../utils/solana.helpers.js";
+
+const CELEBRITY_NAMES = [
+  "Donald Trump", "Joe Biden", "Anatoly Yakovenko", "Raj Gokal",
+  "Vitalik Buterin", "Satoshi Nakamoto", "Elon Musk", "Mark Zuckerberg",
+  "Sam Bankman-Fried", "Changpeng Zhao"
+];
 
 // ── Match Lifecycle ─────────────────────────────────────────────────
 
@@ -31,7 +37,11 @@ export async function startMatch() {
   const [marketPda] = deriveMarketPda(gameId, 0);
   const [vaultPda] = deriveVaultPda(gameId, 0);
 
-  logger.info("Starting match", { gameId, matchUuid, llmRed: redModel, llmBlue: blueModel });
+  const shuffledNames = [...CELEBRITY_NAMES].sort(() => 0.5 - Math.random());
+  const redName = shuffledNames[0];
+  const blueName = shuffledNames[1];
+
+  logger.info("Starting match", { gameId, matchUuid, llmRed: redModel, llmBlue: blueModel, redName, blueName });
 
   await withRetry(
     () => solanaService.initGame(gameId, redAgent, blueAgent),
@@ -60,7 +70,9 @@ export async function startMatch() {
       data: {
         gameId, gamePda: gamePda.toBase58(), matchUuid,
         agentRed: redAgent, agentBlue: blueAgent,
-        llmRed: redModel, llmBlue: blueModel, status: "PENDING",
+        llmRed: redModel, llmBlue: blueModel,
+        redName, blueName,
+        status: "MATCHMAKING",
       },
     });
     const mainMarket = await tx.market.create({
@@ -86,8 +98,8 @@ export async function startMatch() {
     return { match, mainMarket, round1Market };
   });
 
-  // Clear any existing break countdown since a new match is starting
-  await clearMatchBreakCountdown();
+  const matchmakingStartUnix = Math.floor(Date.now() / 1000) + env.MATCHMAKING_PHASE_SECONDS;
+  await setMatchBreakCountdown(matchmakingStartUnix, "MATCHMAKING");
 
   await initGameState({ gameId, matchId: result.match.id, matchUuid });
   wsEvents.matchCreated(result.match);
@@ -114,7 +126,7 @@ export async function playRound(matchId) {
   logger.info("Playing round", { matchId, gameId, round: match.roundNumber });
   wsEvents.roundStarted(matchId, { roundNumber: match.roundNumber, gameId, redHp: match.redHp, blueHp: match.blueHp });
 
-  if (match.status === "PENDING") {
+  if (match.status === "MATCHMAKING") {
     await prisma.match.update({ where: { id: matchId }, data: { status: "ACTIVE" } });
   }
 
@@ -331,11 +343,13 @@ export async function playRound(matchId) {
     });
     await deleteGameState(gameId);
 
-    // Set the break countdown for the next match
-    const breakSeconds = env.MATCH_BREAK_SECONDS;
+    // Set the preparation countdown for the next match
+    const breakSeconds = env.PREPARATION_PHASE_SECONDS;
     const nextStartAtUnix = Math.floor(Date.now() / 1000) + breakSeconds;
-    await setMatchBreakCountdown(nextStartAtUnix);
-    logger.info("Match break started", { breakSeconds, nextStartAt: new Date(nextStartAtUnix * 1000).toISOString() });
+    await setMatchBreakCountdown(nextStartAtUnix, "PREPARING");
+    logger.info("Match break started (PREPARING)", { breakSeconds, nextStartAt: new Date(nextStartAtUnix * 1000).toISOString() });
+    
+    wsEvents.breakPreparing({ nextMatchAt: new Date((nextStartAtUnix + env.MATCHMAKING_PHASE_SECONDS) * 1000).toISOString() });
   }
 
   return { match: updatedMatch, gameState: serializeGameState(gs) };
@@ -367,7 +381,10 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
   const oppHp = isRed ? match.blueHp : match.redHp;
 
   while (!myStayed) {
-    const state = await getGameState(gameId);
+    let state = await getGameState(gameId);
+    state = await updateGameState(gameId, { playerStatus: { ...state.playerStatus, [player.toLowerCase()]: "THINKING" } });
+    wsEvents.gameStats(match.id, await buildStats(gameId, gs));
+    
     const myCards = isRed ? state?.red?.cards : state?.blue?.cards;
     const oppCards = isRed ? state?.blue?.cards : state?.red?.cards;
     const cardHistory = state ? formatCardHistory(state) : "";
@@ -377,6 +394,9 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
       myHp, opponentHp: oppHp, roundNumber: match.roundNumber,
       myStayed, opponentStayed: oppStayed, myAces, myCards, opponentCards: oppCards, cardHistory,
     });
+
+    state = await updateGameState(gameId, { playerStatus: { ...state.playerStatus, [player.toLowerCase()]: "TXPENDING" } });
+    wsEvents.gameStats(match.id, await buildStats(gameId, gs));
 
     const scoreBefore = myScore;
 
@@ -396,16 +416,21 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
         player, action: "HIT", reason, model, scoreBefore, scoreAfter: newScore,
         cardDealt: card, txSignature: txSig,
       });
-
-      wsEvents.agentDecision(match.id, {
-        player, action: "HIT", reason, model, scoreBefore, scoreAfter: newScore, cardDealt: card,
-      });
-
+      
+      await new Promise(r => setTimeout(r, env.MOCK_SOLANA ? 100 : 5000)); // Buffer for tx propagation
+      
       myScore = newScore;
       myAces = newAces;
       oppScore = isRed ? updated.p2Score : updated.p1Score;
       myStayed = isRed ? updated.p1Stayed : updated.p2Stayed;
       oppStayed = isRed ? updated.p2Stayed : updated.p1Stayed;
+
+      state = await updateGameState(gameId, { playerStatus: { ...state.playerStatus, [player.toLowerCase()]: myStayed ? "FINALIZED" : "DONE" } });
+      wsEvents.gameStats(match.id, await buildStats(gameId, updated));
+
+      wsEvents.agentDecision(match.id, {
+        player, action: "HIT", reason, model, scoreBefore, scoreAfter: newScore, cardDealt: card,
+      });
 
       if (myStayed) {
         await recordMove(gameId, {
@@ -427,6 +452,12 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
         player, action: "STAY", reason, model, scoreBefore, scoreAfter: scoreBefore,
         cardDealt: null, txSignature: txSig,
       });
+      
+      await new Promise(r => setTimeout(r, env.MOCK_SOLANA ? 100 : 5000)); // Buffer for tx propagation
+      
+      state = await updateGameState(gameId, { playerStatus: { ...state.playerStatus, [player.toLowerCase()]: "FINALIZED" } });
+      wsEvents.gameStats(match.id, await buildStats(gameId, gs)); // gs hasn't changed here score-wise
+
       wsEvents.agentDecision(match.id, {
         player, action: "STAY", reason, model, scoreBefore, scoreAfter: scoreBefore, cardDealt: null,
       });
@@ -578,18 +609,30 @@ export async function listMatches({ status, page = 1, limit = 20 } = {}) {
 // ── Helpers ─────────────────────────────────────────────────────────
 
 async function buildStats(gameId, gs) {
-  const phase = parseGamePhase(gs.phase);
+  const match = await prisma.match.findUnique({ where: { gameId } });
   const state = await getGameState(gameId);
+  const activePlayerColor = gs?.activePlayer ? parseColor(gs.activePlayer) : "RED";
+  const activePlayerName = activePlayerColor === "RED" ? match?.redName : match?.blueName;
+
+  let gameStatus = match?.status || "MATCHMAKING";
+  if (gameStatus === "PAUSED") gameStatus = "ACTIVE"; // Underlying game status is active if it's playing
+  
   return {
-    gameId: gs.gameId?.toNumber?.() ?? gs.gameId,
-    phase, roundNumber: gs.roundNumber,
-    activePlayer: parseColor(gs.activePlayer),
-    winner: gs.winner ? parseColor(gs.winner) : null,
-    red: { hp: gs.p1Hp, score: gs.p1Score, aces: gs.p1Aces, stayed: gs.p1Stayed, cards: state?.red?.cards || [] },
-    blue: { hp: gs.p2Hp, score: gs.p2Score, aces: gs.p2Aces, stayed: gs.p2Stayed, cards: state?.blue?.cards || [] },
+    gameId: gs?.gameId?.toNumber?.() ?? gameId,
+    gameStatus,
+    serverStatus: match?.status === "PAUSED" ? "PAUSED" : "ACTIVE",
+    activePlayer: { color: activePlayerColor, name: activePlayerName },
+    playerStatus: state?.playerStatus || { red: "WAITING", blue: "WAITING" },
+    roundNumber: gs?.roundNumber || 1,
+    winner: gs?.winner ? parseColor(gs.winner) : null,
+    red: { hp: gs?.p1Hp, score: gs?.p1Score, aces: gs?.p1Aces, stayed: gs?.p1Stayed, name: match?.redName, llm: match?.llmRed, cards: state?.red?.cards || [] },
+    blue: { hp: gs?.p2Hp, score: gs?.p2Score, aces: gs?.p2Aces, stayed: gs?.p2Stayed, name: match?.blueName, llm: match?.llmBlue, cards: state?.blue?.cards || [] },
     river: { red: state?.riverRed, blue: state?.riverBlue },
     tiebreakerCards: state?.tiebreakerCards || [],
-    pastRounds: state?.pastRounds || [],
+    cardHistory: {
+      pastRounds: state?.pastRounds || [],
+      currentRound: { redCards: state?.red?.cards || [], blueCards: state?.blue?.cards || [] }
+    }
   };
 }
 

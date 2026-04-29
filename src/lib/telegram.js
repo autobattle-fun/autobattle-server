@@ -114,7 +114,8 @@ export async function notifyEvent(eventType, data, matchId) {
   switch (eventType) {
     case "match:created":
       message += `Game #${data.gameId}\n`;
-      message += `🔴 ${data.llmRed}\n🔵 ${data.llmBlue}`;
+      message += `🔴 ${data.redName || "Red"} (${data.llmRed})\n`;
+      message += `🔵 ${data.blueName || "Blue"} (${data.llmBlue})`;
       break;
 
     case "round:started":
@@ -139,7 +140,7 @@ export async function notifyEvent(eventType, data, matchId) {
     case "match:ended":
       message += `🏆 <b>WINNER: ${data.winner}</b>\n`;
       message += `Game #${data.gameId} | ${data.totalRounds} rounds\n`;
-      message += `🔴 ${data.llmRed} vs 🔵 ${data.llmBlue}`;
+      message += `🔴 ${data.redName || "Red"} vs 🔵 ${data.blueName || "Blue"}`;
       break;
 
     case "game:paused":

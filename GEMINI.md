@@ -57,3 +57,7 @@ For multi-step tasks, state a brief plan:
 ```
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+## 5. Project-Specific Instructions
+
+Note: Never run prisma db push. If there are changes to db, run migration. Never push.

@@ -122,19 +122,45 @@ async function handlePing(socket, message) {
     if (activeMatch) {
       // Get detailed game state from Redis
       const redisState = await getGameState(activeMatch.gameId);
+      
+      const activePlayerColor = redisState?.activePlayer || "RED";
+      const activePlayerName = activePlayerColor === "RED" ? activeMatch.redName : activeMatch.blueName;
 
       gameState = {
-        matchId: activeMatch.id,
         gameId: activeMatch.gameId,
-        status: activeMatch.status,
+        matchId: activeMatch.id,
+        gameStatus: activeMatch.status === "PAUSED" ? "ACTIVE" : activeMatch.status,
+        serverStatus: activeMatch.status === "PAUSED" ? "PAUSED" : "ACTIVE",
+        activePlayer: { color: activePlayerColor, name: activePlayerName },
+        playerStatus: redisState?.playerStatus || { red: "WAITING", blue: "WAITING" },
         roundNumber: activeMatch.roundNumber,
         redHp: activeMatch.redHp,
         blueHp: activeMatch.blueHp,
-        llmRed: activeMatch.llmRed,
-        llmBlue: activeMatch.llmBlue,
-        phase: redisState?.phase || activeMatch.status,
-        red: redisState?.red || null,
-        blue: redisState?.blue || null,
+        red: { 
+          hp: activeMatch.redHp,
+          name: activeMatch.redName, 
+          llm: activeMatch.llmRed, 
+          score: redisState?.red?.score || 0,
+          stayed: redisState?.red?.stayed || false,
+          cards: redisState?.red?.cards || []
+        },
+        blue: { 
+          hp: activeMatch.blueHp,
+          name: activeMatch.blueName, 
+          llm: activeMatch.llmBlue, 
+          score: redisState?.blue?.score || 0,
+          stayed: redisState?.blue?.stayed || false,
+          cards: redisState?.blue?.cards || []
+        },
+        river: { red: redisState?.riverRed, blue: redisState?.riverBlue },
+        tiebreakerCards: redisState?.tiebreakerCards || [],
+        cardHistory: {
+          pastRounds: redisState?.pastRounds || [],
+          currentRound: { 
+            redCards: redisState?.red?.cards || [], 
+            blueCards: redisState?.blue?.cards || [] 
+          }
+        }
       };
     } else {
       // No active match — check for break countdown
@@ -289,8 +315,8 @@ export const wsEvents = {
     );
   },
 
-  breakCountdown({ remainingSeconds, nextStartAt }) {
-    broadcast("break:countdown", { remainingSeconds, nextStartAt });
+  breakCountdown({ remainingSeconds, nextStartAt, phase }) {
+    broadcast("break:countdown", { remainingSeconds, nextStartAt, phase });
   },
 
   breakPreparing({ nextMatchAt }) {

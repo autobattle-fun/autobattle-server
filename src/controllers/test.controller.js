@@ -736,9 +736,80 @@ export const fireEventMethods = {
   },
   fireGameStats: async (req, res) => {
     try {
-      wsEvents.gameStats("dummy-match-id-123", { gameId: 999, phase: "active", roundNumber: 1, redHp: 8, blueHp: 10 });
+      wsEvents.gameStats("dummy-match-id-123", {
+        gameId: 999,
+        gameStatus: "ACTIVE",
+        serverStatus: "ACTIVE",
+        activePlayer: { color: "RED", name: "Donald Trump" },
+        playerStatus: { red: "THINKING", blue: "WAITING" },
+        roundNumber: 3,
+        red: {
+          hp: 9,
+          score: 15,
+          name: "Donald Trump",
+          llm: "llama-3",
+          cards: [
+            { value: 7, label: "7" },
+            { value: 8, label: "8" },
+          ],
+        },
+        blue: {
+          hp: 8,
+          score: 12,
+          name: "Joe Biden",
+          llm: "mixtral",
+          cards: [
+            { value: 10, label: "10" },
+            { value: 2, label: "2" },
+          ],
+        },
+        cardHistory: {
+          pastRounds: [
+            {
+              roundNumber: 1,
+              redCards: [
+                { value: 10, label: "10" },
+                { value: 8, label: "8" },
+              ],
+              blueCards: [
+                { value: 10, label: "10" },
+                { value: 10, label: "10" },
+              ],
+              redScoreFinal: 18,
+              blueScoreFinal: 20,
+              winner: "BLUE",
+            },
+            {
+              roundNumber: 2,
+              redCards: [
+                { value: 11, label: "A" },
+                { value: 10, label: "10" },
+              ],
+              blueCards: [
+                { value: 9, label: "9" },
+                { value: 8, label: "8" },
+              ],
+              redScoreFinal: 21,
+              blueScoreFinal: 17,
+              winner: "RED",
+            },
+          ],
+          currentRound: {
+            redCards: [
+              { value: 7, label: "7" },
+              { value: 8, label: "8" },
+            ],
+            blueCards: [
+              { value: 10, label: "10" },
+              { value: 2, label: "2" },
+            ],
+          },
+        },
+      });
       res.json({ success: true, message: "Fired gameStats" });
-    } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+    } catch (e) {
+      res.status(500).json({ success: false, error: e.message });
+    }
   },
   fireMatchEnded: async (req, res) => {
     try {
@@ -789,15 +860,14 @@ export const fireEventMethods = {
         gameState: {
           matchId: "dummy-match-id-123",
           gameId: 999,
-          status: "ACTIVE",
+          gameStatus: "ACTIVE",
+          serverStatus: "ACTIVE",
+          activePlayer: { color: "RED", name: "Donald Trump" },
+          playerStatus: { red: "THINKING", blue: "WAITING" },
           roundNumber: 1,
-          redHp: 8,
-          blueHp: 10,
-          llmRed: "meta-llama/llama-3-8b",
-          llmBlue: "mistralai/mixtral-8x7b",
-          phase: "active",
-          red: { score: 18, hasStayed: false },
-          blue: { score: 20, hasStayed: true }
+          red: { hp: 10, score: 15, name: "Donald Trump", llm: "llama-3", cards: [] },
+          blue: { hp: 10, score: 12, name: "Joe Biden", llm: "mixtral", cards: [] },
+          cardHistory: { pastRounds: [], currentRound: { redCards: [], blueCards: [] } }
         },
         countdown: null,
         serverTimestamp: Date.now()

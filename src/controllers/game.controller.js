@@ -153,21 +153,55 @@ export async function getGameStatsController(request, response) {
 
   try {
     const { solanaService } = await import("../services/solana.service.js");
-    const gs = await solanaService.fetchGameState(gameId);
+    const { getGameState, formatCardHistory } = await import("../lib/game-state-store.js");
+    const { prisma } = await import("../db/prisma.js");
+    const { parseColor } = await import("../utils/solana.helpers.js");
 
-    const currentPhase = Object.keys(gs.phase)[0];
-    const activePlayer = Object.keys(gs.activePlayer)[0];
-    const winner = gs.winner ? Object.keys(gs.winner)[0] : null;
+    const gs = await solanaService.fetchGameState(gameId);
+    const match = await prisma.match.findUnique({ where: { gameId } });
+    const redisState = await getGameState(gameId);
+
+    const activePlayerColor = parseColor(gs.activePlayer);
+    const activePlayerName = activePlayerColor === "RED" ? match?.redName : match?.blueName;
+
+    let gameStatus = match?.status || "MATCHMAKING";
+    if (gameStatus === "PAUSED") gameStatus = "ACTIVE";
 
     const stats = {
       gameId: gs.gameId.toNumber(),
-      phase: currentPhase,
+      gameStatus,
+      serverStatus: match?.status === "PAUSED" ? "PAUSED" : "ACTIVE",
+      activePlayer: { color: activePlayerColor, name: activePlayerName },
+      playerStatus: redisState?.playerStatus || { red: "WAITING", blue: "WAITING" },
       roundNumber: gs.roundNumber,
-      activePlayer: activePlayer.toUpperCase(),
-      winner: winner ? winner.toUpperCase() : null,
-      agents: { red: gs.agentRed.toBase58(), blue: gs.agentBlue.toBase58() },
-      red: { hp: gs.p1Hp, score: gs.p1Score, aces: gs.p1Aces, hasStayed: gs.p1Stayed, lastCardDrawn: gs.p1LastCard },
-      blue: { hp: gs.p2Hp, score: gs.p2Score, aces: gs.p2Aces, hasStayed: gs.p2Stayed, lastCardDrawn: gs.p2LastCard },
+      winner: gs.winner ? parseColor(gs.winner) : null,
+      red: { 
+        hp: gs.p1Hp, 
+        score: gs.p1Score, 
+        aces: gs.p1Aces, 
+        stayed: gs.p1Stayed, 
+        name: match?.redName, 
+        llm: match?.llmRed,
+        cards: redisState?.red?.cards || [] 
+      },
+      blue: { 
+        hp: gs.p2Hp, 
+        score: gs.p2Score, 
+        aces: gs.p2Aces, 
+        stayed: gs.p2Stayed, 
+        name: match?.blueName, 
+        llm: match?.llmBlue,
+        cards: redisState?.blue?.cards || []
+      },
+      river: { red: redisState?.riverRed, blue: redisState?.riverBlue },
+      tiebreakerCards: redisState?.tiebreakerCards || [],
+      cardHistory: {
+        pastRounds: redisState?.pastRounds || [],
+        currentRound: { 
+          redCards: redisState?.red?.cards || [], 
+          blueCards: redisState?.blue?.cards || [] 
+        }
+      }
     };
 
     return response.status(200).json({ success: true, data: stats });

@@ -1,7 +1,11 @@
 import dotenv from "dotenv";
 import { z } from "zod";
 
-dotenv.config({ override: true });
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__dirname, "../../.env"), override: true });
 
 const envSchema = z.object({
   NODE_ENV: z
@@ -65,9 +69,15 @@ const envSchema = z.object({
     .optional()
     .transform((value) => value === true || value === "true")
     .default(false),
+  MOCK_SOLANA: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => value === true || value === "true")
+    .default(false),
 
   // ── Match Break ──
-  MATCH_BREAK_SECONDS: z.coerce.number().int().positive().default(300),
+  PREPARATION_PHASE_SECONDS: z.coerce.number().int().positive().default(120),
+  MATCHMAKING_PHASE_SECONDS: z.coerce.number().int().positive().default(300),
 
   // ── Telegram Notifications ──
   TELEGRAM_BOT_TOKEN: z.string().optional(),

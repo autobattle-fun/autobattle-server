@@ -105,6 +105,30 @@ class SolanaService {
     return player === "RED" ? this.agentRedKeypair : this.agentBlueKeypair;
   }
 
+  // ── Mocking Logic ───────────────────────────────────────────────
+
+  _getMockGameState(gameId) {
+    if (!this._mockGames) this._mockGames = {};
+    if (!this._mockGames[gameId]) {
+      this._mockGames[gameId] = {
+        gameId: new BN(gameId),
+        agentRed: this.agentRedKeypair.publicKey,
+        agentBlue: this.agentBlueKeypair.publicKey,
+        p1Hp: 10, p2Hp: 10, p1Score: 0, p2Score: 0,
+        p1Aces: 0, p2Aces: 0, p1Stayed: false, p2Stayed: false,
+        roundNumber: 1,
+        phase: { awaitingInitialDealVrf: {} },
+        activePlayer: { red: {} },
+        winner: null,
+      };
+    }
+    return this._mockGames[gameId];
+  }
+
+  _generateMockTx() {
+    return "mock_tx_" + Math.random().toString(36).substring(7);
+  }
+
   // ── Switchboard Lazy Init ───────────────────────────────────────
 
   async _ensureSwitchboard() {
@@ -130,6 +154,9 @@ class SolanaService {
   // ── Registry ────────────────────────────────────────────────────
 
   async fetchRegistry() {
+    if (env.MOCK_SOLANA) {
+      return { gameCount: new BN(Object.keys(this._mockGames || {}).length + 20) };
+    }
     const [registryPda] = deriveRegistryPda();
     return this.gameEngine.account.registry.fetch(registryPda);
   }
@@ -152,6 +179,9 @@ class SolanaService {
   }
 
   async getNextGameId() {
+    if (env.MOCK_SOLANA) {
+      return Math.floor(Date.now() / 1000) % 1000000;
+    }
     const registry = await this.fetchRegistry();
     return registry.gameCount.toNumber() + 1;
   }
@@ -159,6 +189,10 @@ class SolanaService {
   // ── Game Engine ─────────────────────────────────────────────────
 
   async initGame(gameId, agentRed, agentBlue) {
+    if (env.MOCK_SOLANA) {
+      this._getMockGameState(gameId);
+      return this._generateMockTx();
+    }
     const [registryPda] = deriveRegistryPda();
     const [gamePda] = deriveGamePda(gameId);
     const crank = this.crankKeypair.publicKey;
@@ -178,6 +212,15 @@ class SolanaService {
   }
 
   async fetchGameState(gamePdaOrId) {
+    if (env.MOCK_SOLANA) {
+      let gameId = typeof gamePdaOrId === "number" ? gamePdaOrId : null;
+      if (!gameId && this._mockGames) {
+        // Fallback to the first mock game if we only have one
+        const ids = Object.keys(this._mockGames);
+        if (ids.length > 0) gameId = parseInt(ids[0]);
+      }
+      return this._getMockGameState(gameId || 999);
+    }
     const gamePda =
       typeof gamePdaOrId === "number"
         ? deriveGamePda(gamePdaOrId)[0]
@@ -187,6 +230,11 @@ class SolanaService {
   }
 
   async stay(gameId, player) {
+    if (env.MOCK_SOLANA) {
+      const gs = this._getMockGameState(gameId);
+      if (player === "RED") gs.p1Stayed = true; else gs.p2Stayed = true;
+      return this._generateMockTx();
+    }
     const [gamePda] = deriveGamePda(gameId);
     const agentKp = this.getAgentKeypair(player);
 
@@ -260,6 +308,38 @@ class SolanaService {
    *   the crank signs. For hit (type 1), the active agent signs.
    */
   async vrfStep(gameId, rollType, agentColor) {
+    if (env.MOCK_SOLANA) {
+      const gs = this._getMockGameState(gameId);
+      // Simulate state changes based on rollType
+      if (rollType === 0) { // INITIAL_DEAL
+        gs.p1Score = Math.floor(Math.random() * 10) + 1;
+        gs.p2Score = Math.floor(Math.random() * 10) + 1;
+        gs.phase = { agentTurns: {} };
+      } else if (rollType === 1) { // HIT
+        if (agentColor === "RED") gs.p1Score += Math.floor(Math.random() * 10) + 1;
+        else gs.p2Score += Math.floor(Math.random() * 10) + 1;
+        if (gs.p1Score >= 21) gs.p1Stayed = true;
+        if (gs.p2Score >= 21) gs.p2Stayed = true;
+      } else if (rollType === 2) { // FINAL_REVEAL
+        gs.p1Score += Math.floor(Math.random() * 10) + 1;
+        gs.p2Score += Math.floor(Math.random() * 10) + 1;
+        // Simple win/lose logic for simulation
+        if (gs.p1Score > 21 && gs.p2Score > 21) { /* tie */ }
+        else if (gs.p1Score > 21) gs.p1Hp -= 1;
+        else if (gs.p2Score > 21) gs.p2Hp -= 1;
+        else if (gs.p1Score > gs.p2Score) gs.p2Hp -= 1;
+        else if (gs.p1Score < gs.p2Score) gs.p1Hp -= 1;
+        
+        if (gs.p1Hp <= 0 || gs.p2Hp <= 0) gs.phase = { ended: {} };
+        else {
+          gs.roundNumber += 1;
+          gs.p1Score = 0; gs.p2Score = 0;
+          gs.p1Stayed = false; gs.p2Stayed = false;
+          gs.phase = { awaitingInitialDealVrf: {} };
+        }
+      }
+      return this._generateMockTx();
+    }
     await this._ensureSwitchboard();
 
     const [gamePda] = deriveGamePda(gameId);
@@ -367,6 +447,7 @@ class SolanaService {
   // ── Prediction Market ───────────────────────────────────────────
 
   async createOnChainMarket(gameId, marketIndex, question, expiresAtUnix) {
+    if (env.MOCK_SOLANA) return this._generateMockTx();
     const [marketPda] = deriveMarketPda(gameId, marketIndex);
     const [vaultPda] = deriveVaultPda(gameId, marketIndex);
     const crank = this.crankKeypair.publicKey;
@@ -414,6 +495,7 @@ class SolanaService {
   }
 
   async retrieveLp(marketPdaAddress, vaultPdaAddress) {
+    if (env.MOCK_SOLANA) return this._generateMockTx();
     const crank = this.crankKeypair.publicKey;
     
     const autoMint = env.AUTO_TOKEN_ADDRESS
