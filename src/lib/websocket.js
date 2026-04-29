@@ -17,7 +17,6 @@ let io = null;
  */
 export function initWebSocket(httpServer) {
   io = new SocketIOServer(httpServer, {
-    path: "/ws",
     cors: {
       origin: env.CLIENT_ORIGIN,
       credentials: true,
@@ -46,7 +45,6 @@ export function initWebSocket(httpServer) {
           socket.leave("global");
           socket.join(message.matchId);
           socket.subscribedMatchId = message.matchId;
-          
           socket.emit("subscribed", { matchId: message.matchId });
           logger.info("Client subscribed to match", {
             matchId: message.matchId,
@@ -122,45 +120,52 @@ async function handlePing(socket, message) {
     if (activeMatch) {
       // Get detailed game state from Redis
       const redisState = await getGameState(activeMatch.gameId);
-      
+
       const activePlayerColor = redisState?.activePlayer || "RED";
-      const activePlayerName = activePlayerColor === "RED" ? activeMatch.redName : activeMatch.blueName;
+      const activePlayerName =
+        activePlayerColor === "RED"
+          ? activeMatch.redName
+          : activeMatch.blueName;
 
       gameState = {
         gameId: activeMatch.gameId,
         matchId: activeMatch.id,
-        gameStatus: activeMatch.status === "PAUSED" ? "ACTIVE" : activeMatch.status,
+        gameStatus:
+          activeMatch.status === "PAUSED" ? "ACTIVE" : activeMatch.status,
         serverStatus: activeMatch.status === "PAUSED" ? "PAUSED" : "ACTIVE",
         activePlayer: { color: activePlayerColor, name: activePlayerName },
-        playerStatus: redisState?.playerStatus || { red: "WAITING", blue: "WAITING" },
+        playerStatus: redisState?.playerStatus || {
+          red: "WAITING",
+          blue: "WAITING",
+        },
         roundNumber: activeMatch.roundNumber,
         redHp: activeMatch.redHp,
         blueHp: activeMatch.blueHp,
-        red: { 
+        red: {
           hp: activeMatch.redHp,
-          name: activeMatch.redName, 
-          llm: activeMatch.llmRed, 
+          name: activeMatch.redName,
+          llm: activeMatch.llmRed,
           score: redisState?.red?.score || 0,
           stayed: redisState?.red?.stayed || false,
-          cards: redisState?.red?.cards || []
+          cards: redisState?.red?.cards || [],
         },
-        blue: { 
+        blue: {
           hp: activeMatch.blueHp,
-          name: activeMatch.blueName, 
-          llm: activeMatch.llmBlue, 
+          name: activeMatch.blueName,
+          llm: activeMatch.llmBlue,
           score: redisState?.blue?.score || 0,
           stayed: redisState?.blue?.stayed || false,
-          cards: redisState?.blue?.cards || []
+          cards: redisState?.blue?.cards || [],
         },
         river: { red: redisState?.riverRed, blue: redisState?.riverBlue },
         tiebreakerCards: redisState?.tiebreakerCards || [],
         cardHistory: {
           pastRounds: redisState?.pastRounds || [],
-          currentRound: { 
-            redCards: redisState?.red?.cards || [], 
-            blueCards: redisState?.blue?.cards || [] 
-          }
-        }
+          currentRound: {
+            redCards: redisState?.red?.cards || [],
+            blueCards: redisState?.blue?.cards || [],
+          },
+        },
       };
     } else {
       // No active match — check for break countdown
@@ -172,8 +177,36 @@ async function handlePing(socket, message) {
 
   socket.emit("pong", {
     latency,
-    gameState,
-    countdown,
+    gameState: {
+      gameId: 999,
+      gameStatus: "PREPARING",
+      serverStatus: "ACTIVE",
+      activePlayer: { color: "RED", name: "Donald Trump" },
+      playerStatus: { red: "THINKING", blue: "WAITING" },
+      phase: "RedTurn",
+      roundNumber: 3,
+      red: {
+        hp: 9,
+        score: 15,
+        name: "Donald Trump",
+        llm: "llama-3",
+        cards: [
+          { value: 7, label: "7" },
+          { value: 8, label: "8" },
+        ],
+      },
+      blue: {
+        hp: 8,
+        score: 12,
+        name: "Joe Biden",
+        llm: "mixtral",
+        cards: [
+          { value: 10, label: "10" },
+          { value: 2, label: "2" },
+        ],
+      },
+    },
+    countdown: 228,
     serverTimestamp,
   });
 }
@@ -198,41 +231,25 @@ export function broadcast(eventType, payload, matchId) {
     // Send to specific match room and the global room
     io.to(matchId).to("global").emit(eventType, dataEnvelope);
   } else {
-    // Send to everyone 
+    // Send to everyone
     io.emit(eventType, dataEnvelope);
   }
 
   logger.info("WebSocket broadcast", { eventType, matchId });
 
   // Forward to Telegram (fire-and-forget, never block the broadcast)
-  notifyEvent(eventType, payload, matchId).catch(() => { });
+  notifyEvent(eventType, payload, matchId).catch(() => {});
 }
 
 // ── Typed Event Helpers ─────────────────────────────────────────────
 
 export const wsEvents = {
   matchCreated(match) {
-    broadcast(
-      "match:created",
-      {
-        matchId: match.id,
-        gameId: match.gameId,
-        matchUuid: match.matchUuid,
-        llmRed: match.llmRed,
-        llmBlue: match.llmBlue,
-        agentRed: match.agentRed,
-        agentBlue: match.agentBlue,
-      },
-      match.id,
-    );
+    broadcast("match:created", { match }, match.gameId);
   },
 
   roundStarted(matchId, { roundNumber, gameId, redHp, blueHp }) {
-    broadcast(
-      "round:started",
-      { roundNumber, gameId, redHp, blueHp },
-      matchId,
-    );
+    broadcast("round:started", { roundNumber, gameId, redHp, blueHp }, matchId);
   },
 
   cardsDealt(matchId, { redScore, blueScore, redCard, blueCard }) {
@@ -243,7 +260,10 @@ export const wsEvents = {
     );
   },
 
-  agentDecision(matchId, { player, action, reason, model, scoreBefore, scoreAfter, cardDealt }) {
+  agentDecision(
+    matchId,
+    { player, action, reason, model, scoreBefore, scoreAfter, cardDealt },
+  ) {
     broadcast(
       "agent:decision",
       { player, action, reason, model, scoreBefore, scoreAfter, cardDealt },
@@ -259,10 +279,29 @@ export const wsEvents = {
     );
   },
 
-  roundResolved(matchId, { roundNumber, redHp, blueHp, redScore, blueScore, damageDealt, roundWinner }) {
+  roundResolved(
+    matchId,
+    {
+      roundNumber,
+      redHp,
+      blueHp,
+      redScore,
+      blueScore,
+      damageDealt,
+      roundWinner,
+    },
+  ) {
     broadcast(
       "round:resolved",
-      { roundNumber, redHp, blueHp, redScore, blueScore, damageDealt, roundWinner },
+      {
+        roundNumber,
+        redHp,
+        blueHp,
+        redScore,
+        blueScore,
+        damageDealt,
+        roundWinner,
+      },
       matchId,
     );
   },
@@ -300,19 +339,11 @@ export const wsEvents = {
   },
 
   gamePaused(matchId, { reason, error }) {
-    broadcast(
-      "game:paused",
-      { matchId, reason, error },
-      matchId,
-    );
+    broadcast("game:paused", { matchId, reason, error }, matchId);
   },
 
   gameResumed(matchId) {
-    broadcast(
-      "game:resumed",
-      { matchId },
-      matchId,
-    );
+    broadcast("game:resumed", { matchId }, matchId);
   },
 
   breakCountdown({ remainingSeconds, nextStartAt, phase }) {
@@ -336,4 +367,3 @@ export const wsEvents = {
     io.emit("pong", { type: "pong", ...data });
   },
 };
-
