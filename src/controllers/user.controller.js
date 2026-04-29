@@ -3,6 +3,7 @@ import {
   getUserHistory,
   getPredictionDetail,
 } from "../services/user.service.js";
+import { validate, listPredictionsSchema } from "../utils/validators.js";
 
 const connection = new Connection(process.env.SOLANA_RPC_URL, "confirmed");
 
@@ -48,8 +49,7 @@ export async function historyController(request, response) {
     return response.status(401).json({ error: "Unauthorized" });
   }
 
-  const page = parseInt(request.query.page, 10) || 1;
-  const limit = parseInt(request.query.limit, 10) || 10;
+  const { page, limit } = validate(listPredictionsSchema, request.query || {});
 
   const result = await getUserHistory(request.auth.user.id, page, limit);
   return response.json({
@@ -59,20 +59,11 @@ export async function historyController(request, response) {
 }
 
 export async function predictionDetailController(request, response) {
-  if (!request.auth?.user) {
-    return response.status(401).json({ error: "Unauthorized" });
-  }
-
   const { id } = request.params;
   const prediction = await getPredictionDetail(id);
 
   if (!prediction) {
     return response.status(404).json({ error: "Prediction not found" });
-  }
-
-  // Optional: Check if prediction belongs to the user
-  if (prediction.userId !== request.auth.user.id) {
-    return response.status(403).json({ error: "Forbidden" });
   }
 
   return response.json({

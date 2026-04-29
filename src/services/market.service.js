@@ -63,6 +63,47 @@ export async function listMarketsForMatch(matchId) {
 }
 
 /**
+ * List all markets with pagination.
+ */
+export async function listAllMarkets({ page = 1, limit = 10, status } = {}) {
+  const skip = (page - 1) * limit;
+  const where = {};
+  if (status) {
+    where.status = status;
+  }
+
+  const [markets, total] = await Promise.all([
+    prisma.market.findMany({
+      where,
+      include: {
+        _count: { select: { predictions: true } },
+        match: {
+          select: {
+            id: true,
+            gameId: true,
+            status: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      skip,
+      take: limit,
+    }),
+    prisma.market.count({ where }),
+  ]);
+
+  return {
+    markets,
+    pagination: {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+}
+
+/**
  * Get share prices from on-chain LMSR AMM data.
  *
  * LMSR pricing:
@@ -183,38 +224,6 @@ export async function recordPrediction({
 }
 
 // ── User Positions ──────────────────────────────────────────────────
-
-/**
- * Get a user's predictions for a specific match or market.
- */
-export async function getUserPredictions(userId, { marketId, matchId } = {}) {
-  const where = { userId };
-
-  if (marketId) {
-    where.marketId = marketId;
-  } else if (matchId) {
-    where.market = { matchId };
-  }
-
-  return prisma.prediction.findMany({
-    where,
-    include: {
-      market: {
-        select: {
-          id: true,
-          slug: true,
-          title: true,
-          status: true,
-          winningOutcome: true,
-          match: {
-            select: { id: true, gameId: true, status: true },
-          },
-        },
-      },
-    },
-    orderBy: { createdAt: "desc" },
-  });
-}
 
 /**
  * List all predictions for a specific market with pagination.

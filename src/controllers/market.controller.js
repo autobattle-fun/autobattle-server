@@ -4,12 +4,13 @@ import {
   getSharePrices,
   recordPrediction,
   listPredictionsForMarket,
-  getUserPredictions,
+  listAllMarkets,
 } from "../services/market.service.js";
 import {
   validate,
   recordPredictionSchema,
   listPredictionsSchema,
+  listMarketsSchema,
 } from "../utils/validators.js";
 import { prisma } from "../db/prisma.js";
 
@@ -100,22 +101,16 @@ export async function listPredictionsController(request, response) {
 }
 
 /**
- * GET /me/predictions
- * Get authenticated user's predictions across all markets.
+ * GET /markets
+ * List all markets with pagination.
  */
-export async function myPredictionsController(request, response) {
-  if (!request.auth?.user) {
-    return response.status(401).json({ error: "Unauthorized" });
-  }
-
-  const predictions = await getUserPredictions(request.auth.user.id, {
-    matchId: request.query.matchId,
-    marketId: request.query.marketId,
-  });
+export async function listAllMarketsController(request, response) {
+  const query = validate(listMarketsSchema, request.query || {});
+  const result = await listAllMarkets(query);
 
   return response.json({
     success: true,
-    data: predictions,
+    ...result,
   });
 }
 

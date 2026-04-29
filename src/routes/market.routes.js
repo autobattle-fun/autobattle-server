@@ -5,7 +5,7 @@ import {
   marketPriceController,
   recordPredictionController,
   listPredictionsController,
-  myPredictionsController,
+  listAllMarketsController,
   getRoundMarketController,
 } from "../controllers/market.controller.js";
 import { requireAuth } from "../middlewares/auth-session.js";
@@ -14,13 +14,12 @@ import { asyncHandler } from "../utils/async-handler.js";
 export const marketRoutes = Router();
 
 // Static routes MUST come before parameterised routes
-marketRoutes.get(
-  "/me/predictions",
-  requireAuth,
-  asyncHandler(myPredictionsController),
-);
+marketRoutes.get("/", asyncHandler(listAllMarketsController));
 marketRoutes.get("/match/:matchId", asyncHandler(listMarketsController));
-marketRoutes.get("/game/:gameId/round/:roundNumber", asyncHandler(getRoundMarketController));
+marketRoutes.get(
+  "/game/:gameId/round/:roundNumber",
+  asyncHandler(getRoundMarketController),
+);
 
 // Parameterised routes
 marketRoutes.get("/:marketId", asyncHandler(getMarketController));

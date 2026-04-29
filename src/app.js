@@ -18,7 +18,14 @@ export function createApp() {
     cors({
       origin: env.CLIENT_ORIGIN,
       credentials: true,
-      allowedHeaders: ["Content-Type", "Authorization", "x-request-id"],
+      allowedHeaders: [
+        "Content-Type",
+        "Authorization",
+        "x-request-id",
+        "x-requested-with",
+        "Accept",
+        "Origin",
+      ],
     }),
   );
 
