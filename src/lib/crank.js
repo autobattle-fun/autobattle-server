@@ -4,7 +4,6 @@ import { logger } from "./logger.js";
 import { playRound, startMatch } from "../services/game.service.js";
 import { env } from "../config/env.js";
 import { getMatchBreakCountdown, clearMatchBreakCountdown } from "./game-state-store.js";
-import { wsEvents } from "./websocket.js";
 
 // ── Distributed Lock ────────────────────────────────────────────────
 
@@ -145,9 +144,11 @@ async function crankCycle() {
 
 /**
  * Check if the break between matches has expired, and auto-start a new match if so.
- * Only starts a new match if:
- *  - No ACTIVE or PENDING matches exist
- *  - The break countdown has expired (or no countdown is set)
+ *
+ * Break flow after a match resolves:
+ *  1. MATCHMAKING countdown (3 min) — no match exists, pure wait
+ *  2. MATCHMAKING expires → startMatch() creates match (MATCHMAKING status) + PREPARING countdown (2 min)
+ *  3. PREPARING expires → transition match to ACTIVE
  */
 async function maybeAutoStartMatch() {
   try {
@@ -158,39 +159,31 @@ async function maybeAutoStartMatch() {
 
     if (existingMatch) {
       if (existingMatch.status === "MATCHMAKING") {
+        // Match exists in MATCHMAKING status — waiting for PREPARING countdown to expire
         const countdown = await getMatchBreakCountdown();
-        if (countdown.isBreak && countdown.phase === "MATCHMAKING") {
-          wsEvents.breakCountdown({
-            remainingSeconds: countdown.remainingSeconds,
-            nextStartAt: countdown.nextStartAt,
-            phase: countdown.phase,
-          });
+        if (countdown.isBreak && countdown.phase === "PREPARING") {
+          // Still in preparation phase — wait
           return;
         } else {
-          // Matchmaking expired -> switch to ACTIVE
+          // Preparing expired → switch to ACTIVE
           await prisma.match.update({ where: { id: existingMatch.id }, data: { status: "ACTIVE" } });
-          logger.info("Matchmaking phase expired — Match is now ACTIVE", { matchId: existingMatch.id });
+          logger.info("Preparing phase expired — Match is now ACTIVE", { matchId: existingMatch.id });
           await clearMatchBreakCountdown();
         }
       }
       return;
     }
 
-    // Check the break countdown
+    // No active match — check the break countdown
     const countdown = await getMatchBreakCountdown();
 
     if (countdown.isBreak) {
-      // Still in break period — broadcast countdown and wait
-      wsEvents.breakCountdown({
-        remainingSeconds: countdown.remainingSeconds,
-        nextStartAt: countdown.nextStartAt,
-        phase: countdown.phase,
-      });
+      // Still in MATCHMAKING break period — wait
       return;
     }
 
     // No active match, no break → start a new match
-    logger.info("Preparation phase expired — auto-starting new match (entering MATCHMAKING)");
+    logger.info("Matchmaking phase expired — auto-starting new match (entering PREPARING)");
     await clearMatchBreakCountdown();
     await startMatch();
   } catch (error) {

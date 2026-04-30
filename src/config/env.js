@@ -77,7 +77,7 @@ const envSchema = z.object({
 
   // ── Match Break ──
   PREPARATION_PHASE_SECONDS: z.coerce.number().int().positive().default(120),
-  MATCHMAKING_PHASE_SECONDS: z.coerce.number().int().positive().default(300),
+  MATCHMAKING_PHASE_SECONDS: z.coerce.number().int().positive().default(180),
 
   // ── Telegram Notifications ──
   TELEGRAM_BOT_TOKEN: z.string().optional(),

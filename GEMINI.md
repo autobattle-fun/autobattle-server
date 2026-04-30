@@ -60,4 +60,5 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## 5. Project-Specific Instructions
 
-Note: Never run prisma db push. If there are changes to db, run migration. Never push.
+- Never run prisma db push. If there are changes to db, run migration. Never push.
+- `test.controller.js` and `test.routes.js` are for testing only, no other files should depend on the content of any of these files.

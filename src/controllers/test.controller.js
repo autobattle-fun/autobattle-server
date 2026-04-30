@@ -954,49 +954,6 @@ export const fireEventMethods = {
       res.status(500).json({ success: false, error: e.message });
     }
   },
-  fireHpUpdated: async (req, res) => {
-    try {
-      wsEvents.hpUpdated("dummy-match-id-123", { redHp: 8, blueHp: 10 });
-      res.json({ success: true, message: "Fired hpUpdated" });
-    } catch (e) {
-      res.status(500).json({ success: false, error: e.message });
-    }
-  },
-  fireGameStats: async (req, res) => {
-    try {
-      wsEvents.gameStats("dummy-match-id-123", {
-        gameId: 999,
-        gameStatus: "ACTIVE",
-        serverStatus: "ACTIVE",
-        activePlayer: { color: "RED", name: "Donald Trump" },
-        playerStatus: { red: "THINKING", blue: "WAITING" },
-        roundNumber: 3,
-        red: {
-          hp: 9,
-          score: 15,
-          name: "Donald Trump",
-          llm: "llama-3",
-          cards: [
-            { value: 7, label: "7" },
-            { value: 8, label: "8" },
-          ],
-        },
-        blue: {
-          hp: 8,
-          score: 12,
-          name: "Joe Biden",
-          llm: "mixtral",
-          cards: [
-            { value: 10, label: "10" },
-            { value: 2, label: "2" },
-          ],
-        },
-      });
-      res.json({ success: true, message: "Fired gameStats" });
-    } catch (e) {
-      res.status(500).json({ success: false, error: e.message });
-    }
-  },
   fireMatchEnded: async (req, res) => {
     try {
       broadcast(
@@ -1063,27 +1020,6 @@ export const fireEventMethods = {
       res.status(500).json({ success: false, error: e.message });
     }
   },
-  fireBreakCountdown: async (req, res) => {
-    try {
-      wsEvents.breakCountdown({
-        remainingSeconds: 120,
-        nextStartAt: new Date(Date.now() + 120000).toISOString(),
-      });
-      res.json({ success: true, message: "Fired breakCountdown" });
-    } catch (e) {
-      res.status(500).json({ success: false, error: e.message });
-    }
-  },
-  fireBreakPreparing: async (req, res) => {
-    try {
-      wsEvents.breakPreparing({
-        nextMatchAt: new Date(Date.now() + 60000).toISOString(),
-      });
-      res.json({ success: true, message: "Fired breakPreparing" });
-    } catch (e) {
-      res.status(500).json({ success: false, error: e.message });
-    }
-  },
   fireMarketPrices: async (req, res) => {
     try {
       broadcast(
@@ -1121,7 +1057,7 @@ export const fireEventMethods = {
   },
   fireLogBroadcast: async (req, res) => {
     try {
-      wsEvents.logBroadcast("This is a dummy log message for testing", "info");
+      wsEvents.logBroadcast("System", "This is a dummy log message for testing");
       res.json({ success: true, message: "Fired logBroadcast" });
     } catch (e) {
       res.status(500).json({ success: false, error: e.message });

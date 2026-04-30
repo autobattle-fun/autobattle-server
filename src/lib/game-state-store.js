@@ -343,3 +343,47 @@ export async function clearMatchBreakCountdown() {
   await redis.del(BREAK_KEY);
   logger.info("Match break countdown cleared");
 }
+
+// ── Match Logs ──────────────────────────────────────────────────────
+
+const LOG_KEY_PREFIX = "autobattle:game";
+
+function logKey(gameId) {
+  return `${LOG_KEY_PREFIX}:${gameId}:logs`;
+}
+
+/**
+ * Add a structured log entry for the current match.
+ * Logs persist in Redis until the match resolves and deleteGameState is called.
+ * @param {number} gameId
+ * @param {string} role - "System", "Red", or "Blue"
+ * @param {string} log - The log message
+ */
+export async function addMatchLog(gameId, role, log) {
+  const entry = {
+    role,
+    log,
+    timeStamp: new Date().toISOString(),
+  };
+  await redis.rpush(logKey(gameId), JSON.stringify(entry));
+  await redis.expire(logKey(gameId), STATE_TTL);
+  return entry;
+}
+
+/**
+ * Get all log entries for the current match.
+ * @param {number} gameId
+ * @returns {Array<{role: string, log: string, timeStamp: string}>}
+ */
+export async function getMatchLogs(gameId) {
+  const raw = await redis.lrange(logKey(gameId), 0, -1);
+  return raw.map((r) => JSON.parse(r));
+}
+
+/**
+ * Clear match logs (called when match resolves).
+ * @param {number} gameId
+ */
+export async function clearMatchLogs(gameId) {
+  await redis.del(logKey(gameId));
+}

@@ -99,7 +99,7 @@ async function handlePing(socket, message) {
   try {
     // Check for active or paused match
     const activeMatch = await prisma.match.findFirst({
-      where: { status: { in: ["ACTIVE", "PAUSED", "PENDING"] } },
+      where: { status: { in: ["ACTIVE", "PAUSED", "PENDING", "MATCHMAKING"] } },
       orderBy: { createdAt: "desc" },
       select: {
         id: true,
@@ -109,6 +109,8 @@ async function handlePing(socket, message) {
         roundNumber: true,
         redHp: true,
         blueHp: true,
+        redName: true,
+        blueName: true,
         llmRed: true,
         llmBlue: true,
         agentRed: true,
@@ -177,60 +179,8 @@ async function handlePing(socket, message) {
 
   socket.emit("pong", {
     latency,
-    gameState: {
-      gameId: 999,
-      gameStatus: "ACTIVE",
-      serverStatus: "ACTIVE",
-      activePlayer: { color: "RED", name: "Donald Trump" },
-      playerStatus: { red: "THINKING", blue: "WAITING" },
-      phase: "RedTurn",
-      roundNumber: 3,
-      red: {
-        hp: 9,
-        score: 15,
-        name: "Donald Trump",
-        llm: "llama-3",
-        cards: [
-          { value: 7, label: "7" },
-          { value: 8, label: "8" },
-        ],
-      },
-      blue: {
-        hp: 8,
-        score: 12,
-        name: "Joe Biden",
-        llm: "mixtral",
-        cards: [
-          { value: 10, label: "10" },
-          { value: 2, label: "2" },
-        ],
-      },
-    },
-    market: {
-      mainMarket: {
-        id: "cmoljf1ap0001gx8ovd7lhv42",
-        matchId: "cmoljf12o0000gx8o44w41lgg",
-        marketIndex: 0,
-        targetRound: null,
-        status: "OPEN",
-
-        yesPrice: 0.5,
-        noPrice: 0.5,
-        totalVolumeRaw: 0,
-      },
-      roundMarket: {
-        id: "cmoljf1ia0002gx8ooa94ac1e",
-        matchId: "cmoljf12o0000gx8o44w41lgg",
-        marketIndex: 1,
-        targetRound: 1,
-        status: "OPEN",
-
-        yesPrice: 0.5,
-        noPrice: 0.5,
-        totalVolumeRaw: 0,
-      },
-    },
-    countdown: 228,
+    gameState,
+    countdown,
     serverTimestamp,
   });
 }
@@ -295,9 +245,9 @@ export const wsEvents = {
     );
   },
 
-  riverRevealed(matchId, { redScore, blueScore, redCard, blueCard }) {
+  riverFlowing(matchId, { redScore, blueScore, redCard, blueCard }) {
     broadcast(
-      "river:revealed",
+      "river:flowing",
       { redScore, blueScore, redCard, blueCard },
       matchId,
     );
@@ -346,14 +296,6 @@ export const wsEvents = {
     );
   },
 
-  hpUpdated(matchId, { redHp, blueHp }) {
-    broadcast("hp:updated", { redHp, blueHp }, matchId);
-  },
-
-  gameStats(matchId, stats) {
-    broadcast("game:stats", stats, matchId);
-  },
-
   matchEnded(matchId, { winner, gameId, totalRounds, llmRed, llmBlue }) {
     broadcast(
       "match:ended",
@@ -370,10 +312,6 @@ export const wsEvents = {
     broadcast("game:resumed", { matchId }, matchId);
   },
 
-  breakCountdown({ remainingSeconds, nextStartAt, phase }) {
-    broadcast("break:countdown", { remainingSeconds, nextStartAt, phase });
-  },
-
   breakPreparing({ nextMatchAt }) {
     broadcast("break:preparing", { nextMatchAt });
   },
@@ -382,8 +320,12 @@ export const wsEvents = {
     broadcast("market:prices", prices, marketId);
   },
 
-  logBroadcast(message, level = "info") {
-    broadcast("log:broadcast", { message, level });
+  logBroadcast(role, log) {
+    broadcast("log:broadcast", {
+      role,
+      log,
+      timeStamp: new Date().toISOString(),
+    });
   },
 
   pong(data) {

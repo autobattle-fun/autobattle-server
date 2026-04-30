@@ -22,6 +22,8 @@ import {
   formatCardHistory,
   setMatchBreakCountdown,
   clearMatchBreakCountdown,
+  addMatchLog,
+  clearMatchLogs,
 } from "../lib/game-state-store.js";
 import {
   deriveGamePda,
@@ -146,13 +148,18 @@ export async function startMatch() {
     return { match, mainMarket, round1Market };
   });
 
-  const matchmakingStartUnix =
-    Math.floor(Date.now() / 1000) + env.MATCHMAKING_PHASE_SECONDS;
-  await setMatchBreakCountdown(matchmakingStartUnix, "MATCHMAKING");
+  // Set PREPARING countdown — the match exists but isn't active yet
+  const preparingEndUnix =
+    Math.floor(Date.now() / 1000) + env.PREPARATION_PHASE_SECONDS;
+  await setMatchBreakCountdown(preparingEndUnix, "PREPARING");
 
   await initGameState({ gameId, matchId: result.match.id, matchUuid });
   wsEvents.matchCreated(result.match);
-  logger.info("Match started", { matchId: result.match.id, gameId });
+  wsEvents.breakPreparing({
+    nextMatchAt: new Date(preparingEndUnix * 1000).toISOString(),
+  });
+  await addMatchLog(gameId, "System", `Match #${gameId} created — entering preparation phase`);
+  logger.info("Match started (PREPARING)", { matchId: result.match.id, gameId });
   return result;
 }
 
@@ -191,6 +198,7 @@ export async function playRound(matchId) {
     redHp: match.redHp,
     blueHp: match.blueHp,
   });
+  await addMatchLog(gameId, "System", `Round ${match.roundNumber} started`);
 
   if (match.status === "MATCHMAKING") {
     await prisma.match.update({
@@ -268,7 +276,8 @@ export async function playRound(matchId) {
     redCard: redInitCard,
     blueCard: blueInitCard,
   });
-  wsEvents.gameStats(matchId, await buildStats(gameId, gs));
+  await addMatchLog(gameId, "Red", `Dealt ${redInitCard.label} (score: ${gs.p1Score})`);
+  await addMatchLog(gameId, "Blue", `Dealt ${blueInitCard.label} (score: ${gs.p2Score})`);
 
   // Step 2: Agent turns (LLM-driven hit/stay)
   await runAgentTurns(gameId, gs, match);
@@ -303,12 +312,13 @@ export async function playRound(matchId) {
   await recordRiverCards(gameId, riverRedCard, riverBlueCard);
   await syncOnChainState(gameId, gs, parseGamePhase(gs.phase));
 
-  wsEvents.riverRevealed(matchId, {
+  wsEvents.riverFlowing(matchId, {
     redScore: gs.p1Score,
     blueScore: gs.p2Score,
     redCard: riverRedCard,
     blueCard: riverBlueCard,
   });
+  await addMatchLog(gameId, "System", `River revealed — Red: ${riverRedCard.label} (${gs.p1Score}), Blue: ${riverBlueCard.label} (${gs.p2Score})`);
 
   // Step 4: Resolve round (handled automatically by contract during FINAL_REVEAL)
   gs = await solanaService.fetchGameState(gameId);
@@ -485,7 +495,6 @@ export async function playRound(matchId) {
   // Step 8: Sync match state to Prisma
   const updatedMatch = await syncMatchState(match, gs);
 
-  wsEvents.hpUpdated(matchId, { redHp: gs.p1Hp, blueHp: gs.p2Hp });
   wsEvents.roundResolved(matchId, {
     roundNumber: match.roundNumber,
     redHp: gs.p1Hp,
@@ -495,7 +504,7 @@ export async function playRound(matchId) {
     damageDealt,
     roundWinner,
   });
-  wsEvents.gameStats(matchId, await buildStats(gameId, gs));
+  await addMatchLog(gameId, "System", `Round ${match.roundNumber} resolved — Winner: ${roundWinner || "TIE"}, Damage: ${damageDealt}`);
 
   if (updatedMatch.status === "RESOLVED") {
     wsEvents.matchEnded(matchId, {
@@ -505,21 +514,18 @@ export async function playRound(matchId) {
       llmRed,
       llmBlue,
     });
+    await addMatchLog(gameId, "System", `Match ended — Winner: ${updatedMatch.winner}`);
+    wsEvents.logBroadcast("System", `Match #${gameId} ended — Winner: ${updatedMatch.winner}`);
     await deleteGameState(gameId);
+    await clearMatchLogs(gameId);
 
-    // Set the preparation countdown for the next match
-    const breakSeconds = env.PREPARATION_PHASE_SECONDS;
+    // Set the MATCHMAKING countdown for the next match (3 min wait)
+    const breakSeconds = env.MATCHMAKING_PHASE_SECONDS;
     const nextStartAtUnix = Math.floor(Date.now() / 1000) + breakSeconds;
-    await setMatchBreakCountdown(nextStartAtUnix, "PREPARING");
-    logger.info("Match break started (PREPARING)", {
+    await setMatchBreakCountdown(nextStartAtUnix, "MATCHMAKING");
+    logger.info("Match break started (MATCHMAKING)", {
       breakSeconds,
       nextStartAt: new Date(nextStartAtUnix * 1000).toISOString(),
-    });
-
-    wsEvents.breakPreparing({
-      nextMatchAt: new Date(
-        (nextStartAtUnix + env.MATCHMAKING_PHASE_SECONDS) * 1000,
-      ).toISOString(),
     });
   }
 
@@ -559,8 +565,6 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
         [player.toLowerCase()]: "THINKING",
       },
     });
-    wsEvents.gameStats(match.id, await buildStats(gameId, gs));
-
     const myCards = isRed ? state?.red?.cards : state?.blue?.cards;
     const oppCards = isRed ? state?.blue?.cards : state?.red?.cards;
     const cardHistory = state ? formatCardHistory(state) : "";
@@ -588,8 +592,6 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
         [player.toLowerCase()]: "TXPENDING",
       },
     });
-    wsEvents.gameStats(match.id, await buildStats(gameId, gs));
-
     const scoreBefore = myScore;
 
     if (action === "HIT") {
@@ -629,7 +631,6 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
           [player.toLowerCase()]: myStayed ? "FINALIZED" : "DONE",
         },
       });
-      wsEvents.gameStats(match.id, await buildStats(gameId, updated));
 
       wsEvents.agentDecision(match.id, {
         player,
@@ -640,6 +641,7 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
         scoreAfter: newScore,
         cardDealt: card,
       });
+      await addMatchLog(gameId, player === "RED" ? "Red" : "Blue", `HIT — dealt ${card.label}, score: ${scoreBefore} → ${newScore}`);
 
       if (myStayed) {
         await recordMove(gameId, {
@@ -689,7 +691,6 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
           [player.toLowerCase()]: "FINALIZED",
         },
       });
-      wsEvents.gameStats(match.id, await buildStats(gameId, gs)); // gs hasn't changed here score-wise
 
       wsEvents.agentDecision(match.id, {
         player,
@@ -700,6 +701,7 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
         scoreAfter: scoreBefore,
         cardDealt: null,
       });
+      await addMatchLog(gameId, player === "RED" ? "Red" : "Blue", `STAY — score: ${scoreBefore}`);
       return;
     }
   }
@@ -964,56 +966,6 @@ export async function listMatches({ status, page = 1, limit = 20 } = {}) {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
-async function buildStats(gameId, gs) {
-  const match = await prisma.match.findUnique({ where: { gameId } });
-  const state = await getGameState(gameId);
-  const activePlayerColor = gs?.activePlayer
-    ? parseColor(gs.activePlayer)
-    : "RED";
-  const activePlayerName =
-    activePlayerColor === "RED" ? match?.redName : match?.blueName;
-
-  let gameStatus = match?.status || "MATCHMAKING";
-  if (gameStatus === "PAUSED") gameStatus = "ACTIVE"; // Underlying game status is active if it's playing
-
-  return {
-    gameId: gs?.gameId?.toNumber?.() ?? gameId,
-    gameStatus,
-    serverStatus: match?.status === "PAUSED" ? "PAUSED" : "ACTIVE",
-    activePlayer: { color: activePlayerColor, name: activePlayerName },
-    playerStatus: state?.playerStatus || { red: "WAITING", blue: "WAITING" },
-    roundNumber: gs?.roundNumber || 1,
-    winner: gs?.winner ? parseColor(gs.winner) : null,
-    red: {
-      hp: gs?.p1Hp,
-      score: gs?.p1Score,
-      aces: gs?.p1Aces,
-      stayed: gs?.p1Stayed,
-      name: match?.redName,
-      llm: match?.llmRed,
-      cards: state?.red?.cards || [],
-    },
-    blue: {
-      hp: gs?.p2Hp,
-      score: gs?.p2Score,
-      aces: gs?.p2Aces,
-      stayed: gs?.p2Stayed,
-      name: match?.blueName,
-      llm: match?.llmBlue,
-      cards: state?.blue?.cards || [],
-    },
-    river: { red: state?.riverRed, blue: state?.riverBlue },
-    tiebreakerCards: state?.tiebreakerCards || [],
-    cardHistory: {
-      pastRounds: state?.pastRounds || [],
-      currentRound: {
-        redCards: state?.red?.cards || [],
-        blueCards: state?.blue?.cards || [],
-      },
-    },
-  };
-}
 
 function serializeGameState(gs) {
   return {

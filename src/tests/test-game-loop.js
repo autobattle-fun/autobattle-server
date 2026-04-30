@@ -11,7 +11,6 @@ import { startMatch, playUntilResolved } from "../services/game.service.js";
 import { prisma } from "../db/prisma.js";
 import { setMatchBreakCountdown, getMatchBreakCountdown } from "../lib/game-state-store.js";
 import { startCrankEngine, stopCrankEngine } from "../lib/crank.js";
-import { wsEvents } from "../lib/websocket.js";
 import { redis } from "../db/redis.js";
 
 async function runTest() {
@@ -27,8 +26,8 @@ async function runTest() {
       await redis.del(...lockKeys);
       console.log(`Cleared ${lockKeys.length} stale locks.`);
     }
-    console.log("Setting break to expire immediately (PREPARING) to test auto-start...");
-    await setMatchBreakCountdown(Math.floor(Date.now() / 1000), "PREPARING");
+    console.log("Setting break to expire immediately (MATCHMAKING) to test auto-start...");
+    await setMatchBreakCountdown(Math.floor(Date.now() / 1000), "MATCHMAKING");
 
     console.log("Starting crank engine...");
     startCrankEngine();

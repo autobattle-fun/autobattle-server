@@ -82,12 +82,10 @@ const EVENT_EMOJI = {
   "round:started": "🔔",
   "cards:dealt": "🃏",
   "agent:decision": "🤖",
-  "river:revealed": "🌊",
+  "river:flowing": "🌊",
   "round:resolved": "⚔️",
   "tiebreaker:started": "⚡",
   "tiebreaker:resolved": "🎯",
-  "hp:updated": "❤️",
-  "game:stats": "📊",
   "match:ended": "🏆",
   "game:paused": "⏸️",
   "game:resumed": "▶️",
@@ -112,11 +110,13 @@ export async function notifyEvent(eventType, data, matchId) {
 
   // Format event-specific data
   switch (eventType) {
-    case "match:created":
-      message += `Game #${data.gameId}\n`;
-      message += `🔴 ${data.redName || "Red"} (${data.llmRed})\n`;
-      message += `🔵 ${data.blueName || "Blue"} (${data.llmBlue})`;
+    case "match:created": {
+      const m = data.match || data;
+      message += `Game #${m.gameId}\n`;
+      message += `🔴 ${m.redName || "Red"} (${m.llmRed})\n`;
+      message += `🔵 ${m.blueName || "Blue"} (${m.llmBlue})`;
       break;
+    }
 
     case "round:started":
       message += `Round ${data.roundNumber} | Game #${data.gameId}\n`;
@@ -162,7 +162,7 @@ export async function notifyEvent(eventType, data, matchId) {
       break;
 
     case "log:broadcast":
-      message += `[${data.level ? data.level.toUpperCase() : "INFO"}] ${data.message}`;
+      message += `[${data.role || "System"}] ${data.log || data.message}`;
       break;
 
     default:
