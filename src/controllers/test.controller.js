@@ -676,26 +676,54 @@ export const fireEventMethods = {
       broadcast(
         "match:created",
         {
-          gameId: 999,
-          gameStatus: "ACTIVE",
-          serverStatus: "ACTIVE",
-          activePlayer: { color: "RED", name: "Donald Trump" },
-          playerStatus: { red: "WAITING", blue: "WAITING" },
-          phase: "AwaitingInitialDeal",
-          roundNumber: 1,
-          red: {
-            hp: 10,
-            score: 0,
-            name: "Donald Trump",
-            llm: "llama-3",
-            cards: [],
+          game: {
+            gameId: 999,
+            gameStatus: "ACTIVE",
+            serverStatus: "ACTIVE",
+            activePlayer: { color: "RED", name: "Donald Trump" },
+            playerStatus: { red: "WAITING", blue: "WAITING" },
+            phase: "AwaitingInitialDeal",
+            roundNumber: 1,
+            red: {
+              hp: 10,
+              score: 0,
+              name: "Donald Trump",
+              llm: "llama-3",
+              cards: [],
+            },
+            blue: {
+              hp: 10,
+              score: 0,
+              name: "Joe Biden",
+              llm: "mixtral",
+              cards: [],
+            },
           },
-          blue: {
-            hp: 10,
-            score: 0,
-            name: "Joe Biden",
-            llm: "mixtral",
-            cards: [],
+
+          market: {
+            mainMarket: {
+              id: "cmoljf1ap0001gx8ovd7lhv42",
+              matchId: "cmoljf12o0000gx8o44w41lgg",
+              marketIndex: 0,
+              targetRound: null,
+              status: "OPEN",
+
+              yesPrice: 0.63,
+              noPrice: 0.37,
+              totalVolumeRaw: 1000,
+            },
+            roundMarket: {
+              // Send Round Market only when first round market is created
+              id: "cmoljf1ia0002gx8ooa94ac1e",
+              matchId: "cmoljf12o0000gx8o44w41lgg",
+              marketIndex: 1,
+              targetRound: 2,
+              status: "OPEN",
+
+              yesPrice: 0.63,
+              noPrice: 0.37,
+              totalVolumeRaw: 900,
+            },
           },
         },
         999,
@@ -724,28 +752,55 @@ export const fireEventMethods = {
       broadcast(
         "cards:dealt",
         {
-          activePlayer: { color: "RED", name: "Donald Trump" },
-          playerStatus: { red: "THINKING", blue: "WAITING" },
-          phase: "RedTurn",
-          red: {
-            hp: 9,
-            score: 15,
-            name: "Donald Trump",
-            llm: "llama-3",
-            cards: [
-              { value: 7, label: "7" },
-              { value: 8, label: "8" },
-            ],
+          game: {
+            activePlayer: { color: "RED", name: "Donald Trump" },
+            playerStatus: { red: "THINKING", blue: "WAITING" },
+            phase: "RedTurn",
+            red: {
+              hp: 9,
+              score: 15,
+              name: "Donald Trump",
+              llm: "llama-3",
+              cards: [
+                { value: 7, label: "7" },
+                { value: 8, label: "8" },
+              ],
+            },
+            blue: {
+              hp: 8,
+              score: 12,
+              name: "Joe Biden",
+              llm: "mixtral",
+              cards: [
+                { value: 10, label: "10" },
+                { value: 2, label: "2" },
+              ],
+            },
           },
-          blue: {
-            hp: 8,
-            score: 12,
-            name: "Joe Biden",
-            llm: "mixtral",
-            cards: [
-              { value: 10, label: "10" },
-              { value: 2, label: "2" },
-            ],
+          market: {
+            mainMarket: {
+              id: "cmoljf1ap0001gx8ovd7lhv42",
+              matchId: "cmoljf12o0000gx8o44w41lgg",
+              marketIndex: 0,
+              targetRound: null,
+              status: "OPEN",
+
+              yesPrice: 0.63,
+              noPrice: 0.37,
+              totalVolumeRaw: 1000,
+            },
+            roundMarket: {
+              // Send Round Market only when first round market is created
+              id: "cmoljf1ia0002gx8ooa94ac1e",
+              matchId: "cmoljf12o0000gx8o44w41lgg",
+              marketIndex: 1,
+              targetRound: 3,
+              status: "OPEN",
+
+              yesPrice: 0.63,
+              noPrice: 0.37,
+              totalVolumeRaw: 900,
+            },
           },
         },
         999,
@@ -1031,7 +1086,34 @@ export const fireEventMethods = {
   },
   fireMarketPrices: async (req, res) => {
     try {
-      wsEvents.marketPrices("dummy-market-id-456", { YES: 0.65, NO: 0.35 });
+      broadcast(
+        "market:prices",
+        {
+          mainMarket: {
+            id: "cmoljf1ap0001gx8ovd7lhv42",
+            matchId: "cmoljf12o0000gx8o44w41lgg",
+            marketIndex: 0,
+            targetRound: null,
+            status: "OPEN",
+
+            yesPrice: 0.63,
+            noPrice: 0.37,
+            totalVolumeRaw: 1000,
+          },
+          roundMarket: {
+            id: "cmoljf1ia0002gx8ooa94ac1e",
+            matchId: "cmoljf12o0000gx8o44w41lgg",
+            marketIndex: 1,
+            targetRound: 2,
+            status: "OPEN",
+
+            yesPrice: 0.63,
+            noPrice: 0.37,
+            totalVolumeRaw: 900,
+          },
+        },
+        999,
+      );
       res.json({ success: true, message: "Fired marketPrices" });
     } catch (e) {
       res.status(500).json({ success: false, error: e.message });

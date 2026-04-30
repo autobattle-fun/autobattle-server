@@ -179,7 +179,7 @@ async function handlePing(socket, message) {
     latency,
     gameState: {
       gameId: 999,
-      gameStatus: "PREPARING",
+      gameStatus: "ACTIVE",
       serverStatus: "ACTIVE",
       activePlayer: { color: "RED", name: "Donald Trump" },
       playerStatus: { red: "THINKING", blue: "WAITING" },
@@ -204,6 +204,30 @@ async function handlePing(socket, message) {
           { value: 10, label: "10" },
           { value: 2, label: "2" },
         ],
+      },
+    },
+    market: {
+      mainMarket: {
+        id: "cmoljf1ap0001gx8ovd7lhv42",
+        matchId: "cmoljf12o0000gx8o44w41lgg",
+        marketIndex: 0,
+        targetRound: null,
+        status: "OPEN",
+
+        yesPrice: 0.5,
+        noPrice: 0.5,
+        totalVolumeRaw: 0,
+      },
+      roundMarket: {
+        id: "cmoljf1ia0002gx8ooa94ac1e",
+        matchId: "cmoljf12o0000gx8o44w41lgg",
+        marketIndex: 1,
+        targetRound: 1,
+        status: "OPEN",
+
+        yesPrice: 0.5,
+        noPrice: 0.5,
+        totalVolumeRaw: 0,
       },
     },
     countdown: 228,
