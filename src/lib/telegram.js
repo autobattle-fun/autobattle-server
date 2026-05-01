@@ -91,7 +91,6 @@ const EVENT_EMOJI = {
   "game:resumed": "▶️",
   "game:error": "🚨",
   "break:preparing": "⏳",
-  "market:prices": "📈",
   "log:broadcast": "📝",
 };
 
@@ -155,10 +154,6 @@ export async function notifyEvent(eventType, data, matchId) {
 
     case "break:preparing":
       message += `Next match at: ${data.nextMatchAt}`;
-      break;
-
-    case "market:prices":
-      message += `Market Prices Updated:\n${formatDataCompact(data)}`;
       break;
 
     case "log:broadcast":

@@ -188,31 +188,57 @@ async function handlePing(socket, message) {
 // ── Event Broadcasting ──────────────────────────────────────────────
 
 /**
+ * Build the standard event envelope.
+ */
+function makeEnvelope(eventType, payload, matchId) {
+  return {
+    type: eventType,
+    matchId: matchId || null,
+    data: payload,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+/**
+ * Emit an envelope to the appropriate socket.io rooms.
+ */
+function emitToRooms(eventType, envelope, matchId) {
+  if (!io) return;
+
+  if (matchId) {
+    io.to(matchId).to("global").emit(eventType, envelope);
+  } else {
+    io.emit(eventType, envelope);
+  }
+}
+
+/**
  * Broadcast a game event to all connected clients.
  * Also forwards the event as a Telegram notification.
  */
 export function broadcast(eventType, payload, matchId) {
   if (!io) return;
 
-  const dataEnvelope = {
-    type: eventType,
-    matchId: matchId || null,
-    data: payload,
-    timestamp: new Date().toISOString(),
-  };
-
-  if (matchId) {
-    // Send to specific match room and the global room
-    io.to(matchId).to("global").emit(eventType, dataEnvelope);
-  } else {
-    // Send to everyone
-    io.emit(eventType, dataEnvelope);
-  }
+  const envelope = makeEnvelope(eventType, payload, matchId);
+  emitToRooms(eventType, envelope, matchId);
 
   logger.info("WebSocket broadcast", { eventType, matchId });
 
   // Forward to Telegram (fire-and-forget, never block the broadcast)
   notifyEvent(eventType, payload, matchId).catch(() => {});
+}
+
+/**
+ * Broadcast a game event to WebSocket clients only (no Telegram).
+ * Used for high-frequency events like market price updates.
+ */
+export function broadcastNoTelegram(eventType, payload, matchId) {
+  if (!io) return;
+
+  const envelope = makeEnvelope(eventType, payload, matchId);
+  emitToRooms(eventType, envelope, matchId);
+
+  logger.info("WebSocket broadcast (no-telegram)", { eventType, matchId });
 }
 
 // ── Typed Event Helpers ─────────────────────────────────────────────
@@ -266,8 +292,8 @@ export const wsEvents = {
     broadcast("break:preparing", { nextMatchAt });
   },
 
-  marketPrices(marketId, prices) {
-    broadcast("market:prices", prices, marketId);
+  marketPrices(matchId, prices) {
+    broadcastNoTelegram("market:prices", prices, matchId);
   },
 
   logBroadcast(role, log) {
