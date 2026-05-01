@@ -218,98 +218,48 @@ export function broadcast(eventType, payload, matchId) {
 // ── Typed Event Helpers ─────────────────────────────────────────────
 
 export const wsEvents = {
-  matchCreated(match) {
-    broadcast("match:created", { match }, match.gameId);
+  matchCreated(payload, matchId) {
+    broadcast("match:created", payload, matchId);
   },
 
-  roundStarted(matchId, { roundNumber, gameId, redHp, blueHp }) {
-    broadcast("round:started", { roundNumber, gameId, redHp, blueHp }, matchId);
+  roundStarted(payload, matchId) {
+    broadcast("round:started", payload, matchId);
   },
 
-  cardsDealt(matchId, { redScore, blueScore, redCard, blueCard }) {
-    broadcast(
-      "cards:dealt",
-      { redScore, blueScore, redCard, blueCard },
-      matchId,
-    );
+  cardsDealt(payload, matchId) {
+    broadcast("cards:dealt", payload, matchId);
   },
 
-  agentDecision(
-    matchId,
-    { player, action, reason, model, scoreBefore, scoreAfter, cardDealt },
-  ) {
-    broadcast(
-      "agent:decision",
-      { player, action, reason, model, scoreBefore, scoreAfter, cardDealt },
-      matchId,
-    );
+  agentDecision(payload, matchId) {
+    broadcast("agent:decision", payload, matchId);
   },
 
-  riverFlowing(matchId, { redScore, blueScore, redCard, blueCard }) {
-    broadcast(
-      "river:flowing",
-      { redScore, blueScore, redCard, blueCard },
-      matchId,
-    );
+  riverFlowing(payload, matchId) {
+    broadcast("river:flowing", payload, matchId);
   },
 
-  roundResolved(
-    matchId,
-    {
-      roundNumber,
-      redHp,
-      blueHp,
-      redScore,
-      blueScore,
-      damageDealt,
-      roundWinner,
-    },
-  ) {
-    broadcast(
-      "round:resolved",
-      {
-        roundNumber,
-        redHp,
-        blueHp,
-        redScore,
-        blueScore,
-        damageDealt,
-        roundWinner,
-      },
-      matchId,
-    );
+  roundResolved(payload, matchId) {
+    broadcast("round:resolved", payload, matchId);
   },
 
-  tiebreakerStarted(matchId, { roundNumber, redScore, blueScore }) {
-    broadcast(
-      "tiebreaker:started",
-      { roundNumber, redScore, blueScore },
-      matchId,
-    );
+  tiebreakerStarted(payload, matchId) {
+    broadcast("tiebreaker:started", payload, matchId);
   },
 
-  tiebreakerResolved(matchId, { redScore, blueScore, redCard, blueCard }) {
-    broadcast(
-      "tiebreaker:resolved",
-      { redScore, blueScore, redCard, blueCard },
-      matchId,
-    );
+  tiebreakerResolved(payload, matchId) {
+    broadcast("tiebreaker:resolved", payload, matchId);
   },
 
-  matchEnded(matchId, { winner, gameId, totalRounds, llmRed, llmBlue }) {
-    broadcast(
-      "match:ended",
-      { winner, gameId, totalRounds, llmRed, llmBlue },
-      matchId,
-    );
+  matchEnded(payload, matchId) {
+    broadcast("match:ended", payload, matchId);
   },
 
-  gamePaused(matchId, { reason, error }) {
-    broadcast("game:paused", { matchId, reason, error }, matchId);
+  gamePaused(payload, matchId) {
+    broadcast("game:paused", payload, matchId);
   },
 
-  gameResumed(matchId) {
-    broadcast("game:resumed", { matchId }, matchId);
+  gameResumed(payload, matchId) {
+    broadcast("game:resumed", payload, matchId);
   },
 
   breakPreparing({ nextMatchAt }) {

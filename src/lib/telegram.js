@@ -111,36 +111,36 @@ export async function notifyEvent(eventType, data, matchId) {
   // Format event-specific data
   switch (eventType) {
     case "match:created": {
-      const m = data.match || data;
-      message += `Game #${m.gameId}\n`;
-      message += `🔴 ${m.redName || "Red"} (${m.llmRed})\n`;
-      message += `🔵 ${m.blueName || "Blue"} (${m.llmBlue})`;
+      const g = data.game || data;
+      message += `Game #${g.gameId}\n`;
+      message += `🔴 ${g.red?.name || "Red"} (${g.red?.llm || g.llmRed})\n`;
+      message += `🔵 ${g.blue?.name || "Blue"} (${g.blue?.llm || g.llmBlue})`;
       break;
     }
 
     case "round:started":
-      message += `Round ${data.roundNumber} | Game #${data.gameId}\n`;
-      message += `❤️ Red: ${data.redHp} HP | 💙 Blue: ${data.blueHp} HP`;
+      message += `Round ${data.roundNumber}`;
       break;
 
     case "agent:decision":
-      message += `${data.player === "RED" ? "🔴" : "🔵"} ${data.player} → <b>${data.action}</b>\n`;
-      if (data.reason) message += `💭 ${data.reason}\n`;
-      if (data.cardDealt) message += `🃏 Card: ${data.cardDealt.label}`;
-      message += `\nScore: ${data.scoreBefore} → ${data.scoreAfter}`;
+      if (data.playerStatus) {
+        message += `Player Status: Red=${data.playerStatus.red}, Blue=${data.playerStatus.blue}`;
+      }
+      if (data.red) message += `\n❤️ Red: ${data.red.score} pts`;
+      if (data.blue) message += `\n💙 Blue: ${data.blue.score} pts`;
       break;
 
     case "round:resolved":
-      message += `Round ${data.roundNumber} resolved\n`;
-      message += `❤️ Red: ${data.redHp} HP (Score: ${data.redScore})\n`;
-      message += `💙 Blue: ${data.blueHp} HP (Score: ${data.blueScore})\n`;
-      message += `⚔️ Damage: ${data.damageDealt} | Winner: ${data.roundWinner || "TIE"}`;
+      message += `Phase: ${data.phase}\n`;
+      if (data.red) message += `❤️ Red: ${data.red.hp} HP (Score: ${data.red.score})\n`;
+      if (data.blue) message += `💙 Blue: ${data.blue.hp} HP (Score: ${data.blue.score})`;
       break;
 
     case "match:ended":
-      message += `🏆 <b>WINNER: ${data.winner}</b>\n`;
-      message += `Game #${data.gameId} | ${data.totalRounds} rounds\n`;
-      message += `🔴 ${data.redName || "Red"} vs 🔵 ${data.blueName || "Blue"}`;
+      message += `🏆 <b>MATCH ENDED</b>\n`;
+      message += `Game #${data.gameId}\n`;
+      if (data.red) message += `🔴 ${data.red.name} (${data.red.hp} HP)\n`;
+      if (data.blue) message += `🔵 ${data.blue.name} (${data.blue.hp} HP)`;
       break;
 
     case "game:paused":
@@ -481,7 +481,7 @@ function formatDataCompact(data) {
   return Object.entries(data)
     .filter(([, v]) => v !== null && v !== undefined)
     .map(([k, v]) => {
-      if (typeof v === "object") return `${k}: ${JSON.stringify(v)}`;
+      if (typeof v === "object") return `${k}: ${JSON.stringify(v, null, 2)}`;
       return `${k}: ${v}`;
     })
     .join("\n");
