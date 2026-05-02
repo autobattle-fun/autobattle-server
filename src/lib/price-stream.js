@@ -25,6 +25,9 @@ const accountSubs = new Map();
 // map marketPda -> DB metadata used in broadcasts
 const marketCache = new Map();
 
+// map marketPda -> latest decoded market data payload
+const latestMarketStates = new Map();
+
 function getWsUrlFromRpcUrl(rpcUrl) {
   if (rpcUrl.startsWith("https://")) return rpcUrl.replace("https://", "wss://");
   if (rpcUrl.startsWith("http://")) return rpcUrl.replace("http://", "ws://");
@@ -55,12 +58,12 @@ function decodeMarketAccount(accountInfo) {
   return coder.accounts.decode("market", accountInfo.data);
 }
 
-function broadcastMarketUpdate(cached, decodedMarket) {
+function formatMarketData(cached, decodedMarket) {
   const yesSupply = decodedMarket.yesSupply.toNumber();
   const noSupply = decodedMarket.noSupply.toNumber();
   const { yesPrice, noPrice } = calculatePrices(yesSupply, noSupply);
 
-  const marketData = {
+  return {
     id: cached.id,
     matchId: cached.matchId,
     marketIndex: cached.marketIndex,
@@ -70,15 +73,26 @@ function broadcastMarketUpdate(cached, decodedMarket) {
     noPrice,
     totalVolumeRaw: decodedMarket.totalVolume.toNumber(),
   };
+}
 
+function broadcastCombinedPrices(matchId) {
   const payload = {};
-  if (cached.marketType === "MAIN") {
-    payload.mainMarket = marketData;
-  } else {
-    payload.roundMarket = marketData;
+  for (const [pda, cached] of marketCache.entries()) {
+    if (cached.matchId === matchId) {
+      const state = latestMarketStates.get(pda);
+      if (state) {
+        if (cached.marketType === "MAIN") {
+          payload.mainMarket = state;
+        } else {
+          payload.roundMarket = state;
+        }
+      }
+    }
   }
 
-  wsEvents.marketPrices(cached.matchId, payload);
+  if (Object.keys(payload).length > 0) {
+    wsEvents.marketPrices(matchId, payload);
+  }
 }
 
 async function ensureConnection() {
@@ -142,7 +156,10 @@ async function subscribeToMarket(market) {
         if (!cached) return;
 
         const decodedMarket = decodeMarketAccount(accountInfo);
-        broadcastMarketUpdate(cached, decodedMarket);
+        const marketData = formatMarketData(cached, decodedMarket);
+        latestMarketStates.set(market.marketPda, marketData);
+
+        broadcastCombinedPrices(cached.matchId);
       } catch (error) {
         logger.error("Failed to process market account change", {
           marketPda: market.marketPda,
@@ -159,6 +176,25 @@ async function subscribeToMarket(market) {
     marketPda: market.marketPda,
     subId,
   });
+
+  // Fetch initial state immediately
+  try {
+    const initialInfo = await conn.getAccountInfo(pubkey, COMMITMENT);
+    if (initialInfo) {
+      const cached = marketCache.get(market.marketPda);
+      if (cached) {
+        const decodedMarket = decodeMarketAccount(initialInfo);
+        const marketData = formatMarketData(cached, decodedMarket);
+        latestMarketStates.set(market.marketPda, marketData);
+        broadcastCombinedPrices(cached.matchId);
+      }
+    }
+  } catch (error) {
+    logger.warn("Failed to fetch initial market state", {
+      marketPda: market.marketPda,
+      error: error?.message,
+    });
+  }
 }
 
 async function unsubscribeMarket(marketPda) {
@@ -179,6 +215,7 @@ async function unsubscribeMarket(marketPda) {
   } finally {
     accountSubs.delete(marketPda);
     marketCache.delete(marketPda);
+    latestMarketStates.delete(marketPda);
   }
 }
 
@@ -224,11 +261,13 @@ async function syncActiveMarketSubscriptions() {
     const missing = wantedMarkets.filter((m) => !existingSet.has(m.marketPda));
     await Promise.all(missing.map(subscribeToMarket));
 
-    logger.info("Market subscription sync complete", {
-      activeMatchId: activeMatch.id,
-      roundNumber: activeMatch.roundNumber,
-      subscribedCount: accountSubs.size,
-    });
+    if (stale.length > 0 || missing.length > 0) {
+      logger.info("Market subscription sync complete", {
+        activeMatchId: activeMatch.id,
+        roundNumber: activeMatch.roundNumber,
+        subscribedCount: accountSubs.size,
+      });
+    }
   } catch (error) {
     logger.error("Failed to sync active market subscriptions", {
       error: error?.message,
