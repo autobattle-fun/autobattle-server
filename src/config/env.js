@@ -94,6 +94,19 @@ const envSchema = z.object({
 
   // ── Admin API Key ──
   ADMIN_API_KEY: z.string().min(1).optional(),
+
+  // ── Openfort ──
+  OPENFORT_SECRET_KEY: z.string().min(1, "OPENFORT_SECRET_KEY is required"),
+  OPENFORT_WALLET_SECRET: z
+    .string()
+    .min(1, "OPENFORT_WALLET_SECRET is required"),
+  OPENFORT_PUBLISHABLE_KEY: z
+    .string()
+    .min(1, "OPENFORT_PUBLISHABLE_KEY is required"),
+  OPENFORT_ENCRYPTION_SHARE: z
+    .string()
+    .min(1, "OPENFORT_ENCRYPTION_SHARE is required"),
+  OPENFORT_PROJECT_KEY: z.string().min(1, "OPENFORT_PROJECT_KEY is required"),
 });
 
 const parsed = envSchema.safeParse(process.env);
