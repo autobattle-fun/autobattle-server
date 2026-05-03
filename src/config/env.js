@@ -25,24 +25,7 @@ const envSchema = z.object({
     .union([z.string(), z.boolean()])
     .optional()
     .transform((value) => value === true || value === "true"),
-  PRIVY_APP_ID: z.string().min(1, "PRIVY_APP_ID is required"),
-  PRIVY_APP_SECRET: z.string().min(1, "PRIVY_APP_SECRET is required"),
-  PRIVY_JWT_VERIFICATION_KEY: z
-    .string()
-    .optional()
-    .transform((value) => {
-      if (!value) {
-        return undefined;
-      }
 
-      const normalized = value.trim();
-
-      if (!normalized || /^your-/i.test(normalized)) {
-        return undefined;
-      }
-
-      return normalized;
-    }),
   API_WORKERS: z.coerce.number().int().positive().default(1),
 
   // ── Solana & Web3 ──
