@@ -146,15 +146,16 @@ model Prediction {
   amount      Decimal        @db.Decimal(20, 8)
   shareAmount Decimal        @default(0) @db.Decimal(20, 8)
 
-  // SOLANA INTEGRATION FIELDS
-  positionPda String  @unique // The on-chain userPosition PDA
-  hasClaimed  Boolean @default(false) // Prevents double-claiming UI states
+  positionPda String
+  hasClaimed  Boolean @default(false)
 
   createdAt DateTime @default(now())
 
   market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  // A user can only have ONE 'YES' row and ONE 'NO' row per market
+  @@unique([userId, marketId, side])
   @@index([marketId])
   @@index([userId])
 }

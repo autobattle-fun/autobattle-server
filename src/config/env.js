@@ -90,6 +90,7 @@ const envSchema = z.object({
     .string()
     .min(1, "OPENFORT_ENCRYPTION_SHARE is required"),
   OPENFORT_PROJECT_KEY: z.string().min(1, "OPENFORT_PROJECT_KEY is required"),
+  OPENFORT_POLICY_ID: z.string().min(1, "OPENFORT_POLICY_ID is required"),
 });
 
 const parsed = envSchema.safeParse(process.env);
