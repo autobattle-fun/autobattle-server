@@ -4,6 +4,7 @@ import {
   getPredictionDetail,
 } from "../services/user.service.js";
 import { validate, listPredictionsSchema } from "../utils/validators.js";
+import { prisma } from "../db/prisma.js";
 
 const connection = new Connection(process.env.SOLANA_RPC_URL, "confirmed");
 
@@ -17,9 +18,6 @@ export async function meController(request, response) {
 
   const walletPublicKey = new PublicKey(walletAddress);
   const mintPublicKey = new PublicKey(tokenMintAddress);
-
-  const lamports = await connection.getBalance(walletPublicKey);
-  const solBalance = lamports / LAMPORTS_PER_SOL;
 
   const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
     walletPublicKey,
@@ -38,22 +36,29 @@ export async function meController(request, response) {
   return response.json({
     user: request.auth.user,
     metadata: {
-      solBalance,
       splTokenBalance,
     },
   });
 }
 
 export async function historyController(request, response) {
-  if (!request.auth?.user) {
-    return response.status(401).json({ error: "Unauthorized" });
+  const { username } = request.params;
+  const user = await prisma.user.findUnique({
+    where: {
+      username: username,
+    },
+  });
+
+  if (!user) {
+    return response.status(404).json({ error: "User not found" });
   }
 
   const { page, limit } = validate(listPredictionsSchema, request.query || {});
 
-  const result = await getUserHistory(request.auth.user.id, page, limit);
+  const result = await getUserHistory(user.id, page, limit);
   return response.json({
     success: true,
+    user: user,
     ...result,
   });
 }
@@ -69,5 +74,51 @@ export async function predictionDetailController(request, response) {
   return response.json({
     success: true,
     data: prediction,
+  });
+}
+
+export async function getUserById(request, response) {
+  const { userId } = request.params;
+  const user = await prisma.user.findUnique({
+    where: {
+      id: userId,
+    },
+  });
+
+  if (!user) {
+    return response.json({
+      success: true,
+      user: null,
+    });
+  }
+
+  return response.json({
+    success: true,
+    data: user,
+  });
+}
+
+export async function createUser(request, response) {
+  const user = request.auth.user;
+  const session = request.auth.session;
+
+  if (user) {
+    return response.status(400).json({ error: "User already exists" });
+  }
+
+  const { username, walletAddress } = request.body;
+
+  const newUser = await prisma.user.create({
+    data: {
+      id: session?.user?.id,
+      username,
+      walletAddress,
+      email: session?.user?.email,
+    },
+  });
+
+  return response.json({
+    success: true,
+    data: newUser,
   });
 }

@@ -45,7 +45,7 @@ async function start(workerId) {
     // Start crank engine on worker 1 only to avoid duplicates
     if (workerId === 1) {
       startCrankEngine();
-      startPriceStream();
+      // startPriceStream();
       // startTelegramBot();
     }
   });
@@ -53,7 +53,7 @@ async function start(workerId) {
   const shutdown = async () => {
     logger.info("Shutting down API server", { workerId });
     stopCrankEngine();
-    await stopPriceStream();
+    // await stopPriceStream();
     // stopTelegramBot();
     server.close(async () => {
       await prisma.$disconnect();

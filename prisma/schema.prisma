@@ -7,23 +7,23 @@ datasource db {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  privyUserId   String    @unique
-  username      String    @unique
-  authProvider  String    @default("privy")
-  walletAddress String?
-  email         String?
-  status        String    @default("active")
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  lastLoginAt   DateTime?
-  totalPredictions Int @default(0)
-  totalEarnings Decimal @default(0) @db.Decimal(20, 8)
-  totalWins Int @default(0)
+  id               String    @id
+  username         String    @unique
+  walletAddress    String?
+  email            String?
+  status           String    @default("active")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  lastLoginAt      DateTime?
+  totalPredictions Int       @default(0)
+  totalEarnings    Decimal   @default(0) @db.Decimal(20, 8)
+  totalWins        Int       @default(0)
 
-  predictions Prediction[]
-  comments Comment[]
+  predictions  Prediction[]
+  comments     Comment[]
   commentLikes CommentLike[]
+
+  @@index([username])
 }
 
 model Match {
@@ -42,7 +42,7 @@ model Match {
   roundNumber Int         @default(1)
   redHp       Int         @default(10)
   blueHp      Int         @default(10)
-  winner      String?     // "RED" or "BLUE" — set on resolution
+  winner      String? // "RED" or "BLUE" — set on resolution
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -58,25 +58,25 @@ model MatchRound {
   matchId String
   match   Match  @relation(fields: [matchId], references: [id], onDelete: Cascade)
 
-  roundNumber  Int
-  phase        String // Final phase after resolution (e.g. "ENDED", "AWAITING_INITIAL_DEAL")
-  redScoreInit Int // Red score after initial deal
-  blueScoreInit Int // Blue score after initial deal
-  redScoreFinal Int // Red score after river
+  roundNumber    Int
+  phase          String // Final phase after resolution (e.g. "ENDED", "AWAITING_INITIAL_DEAL")
+  redScoreInit   Int // Red score after initial deal
+  blueScoreInit  Int // Blue score after initial deal
+  redScoreFinal  Int // Red score after river
   blueScoreFinal Int // Blue score after river
-  redHpBefore  Int
-  blueHpBefore Int
-  redHpAfter   Int
-  blueHpAfter  Int
-  damageDealt  Int
-  roundWinner  String? // "RED", "BLUE", or null (tiebreaker ongoing)
+  redHpBefore    Int
+  blueHpBefore   Int
+  redHpAfter     Int
+  blueHpAfter    Int
+  damageDealt    Int
+  roundWinner    String? // "RED", "BLUE", or null (tiebreaker ongoing)
 
   // Card tracking — stored as JSON arrays: [{ value: 10, label: "K" }, ...]
-  redCardsDealt  Json @default("[]")
-  blueCardsDealt Json @default("[]")
-  riverRedCard   Json? // Single card object
-  riverBlueCard  Json? // Single card object
-  tiebreakerCards Json @default("[]") // Array of tiebreaker card pairs
+  redCardsDealt   Json  @default("[]")
+  blueCardsDealt  Json  @default("[]")
+  riverRedCard    Json? // Single card object
+  riverBlueCard   Json? // Single card object
+  tiebreakerCards Json  @default("[]") // Array of tiebreaker card pairs
 
   createdAt DateTime @default(now())
 
@@ -87,15 +87,15 @@ model MatchRound {
 }
 
 model RoundMove {
-  id      String @id @default(cuid())
+  id      String     @id @default(cuid())
   roundId String
   round   MatchRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
 
-  moveNumber Int // Order of move within the round (1, 2, 3...)
-  player     String // "RED" or "BLUE"
-  action     String // "HIT", "STAY", "FORCED_STAY"
-  reason     String? // LLM's reasoning for the decision
-  model      String // OpenRouter model identifier used
+  moveNumber  Int // Order of move within the round (1, 2, 3...)
+  player      String // "RED" or "BLUE"
+  action      String // "HIT", "STAY", "FORCED_STAY"
+  reason      String? // LLM's reasoning for the decision
+  model       String // OpenRouter model identifier used
   scoreBefore Int // Score before this move
   scoreAfter  Int // Score after this move (same for STAY)
   cardDealt   Json? // The card dealt on HIT: { value: 10, label: "K" }
@@ -133,18 +133,18 @@ model Market {
   updatedAt DateTime @updatedAt
 
   predictions Prediction[]
+  comments    Comment[]
 
   @@index([matchId])
-  comments Comment[]
 }
 
 model Prediction {
-  id       String         @id @default(cuid())
-  userId   String
-  marketId String
-  side     PredictionSide // YES = Red, NO = Blue
-  amount   Decimal        @db.Decimal(20, 8)
-  shareAmount Decimal     @default(0) @db.Decimal(20, 8)
+  id          String         @id @default(cuid())
+  userId      String
+  marketId    String
+  side        PredictionSide // YES = Red, NO = Blue
+  amount      Decimal        @db.Decimal(20, 8)
+  shareAmount Decimal        @default(0) @db.Decimal(20, 8)
 
   // SOLANA INTEGRATION FIELDS
   positionPda String  @unique // The on-chain userPosition PDA
@@ -167,12 +167,12 @@ model Comment {
   likes     Int      @default(0)
   createdAt DateTime @default(now())
 
-  market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  market       Market        @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  commentLikes CommentLike[]
 
   @@index([marketId])
   @@index([userId])
-  commentLikes CommentLike[]
 }
 
 model CommentLike {
@@ -182,7 +182,7 @@ model CommentLike {
   createdAt DateTime @default(now())
 
   comment Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([commentId])
   @@index([userId])

@@ -4,6 +4,4 @@ export function getBearerToken(request) {
   if (header.startsWith("Bearer ")) {
     return header.slice(7);
   }
-
-  return request.cookies?.["privy-token"] || null;
 }
