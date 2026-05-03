@@ -11,6 +11,7 @@ import { startMatch, playUntilResolved } from "../services/game.service.js";
 import { prisma } from "../db/prisma.js";
 import { setMatchBreakCountdown, getMatchBreakCountdown } from "../lib/game-state-store.js";
 import { startCrankEngine, stopCrankEngine } from "../lib/crank.js";
+import { startPriceStream, stopPriceStream } from "../lib/price-stream.js";
 import { redis } from "../db/redis.js";
 
 async function runTest() {
@@ -31,6 +32,8 @@ async function runTest() {
 
     console.log("Starting crank engine...");
     startCrankEngine();
+    console.log("Starting price stream...");
+    startPriceStream();
 
     let matchId = null;
     let resolved = false;
@@ -69,6 +72,7 @@ async function runTest() {
     }
 
     stopCrankEngine();
+    stopPriceStream();
     console.log("[TEST] Success!");
     process.exit(0);
   } catch (error) {
