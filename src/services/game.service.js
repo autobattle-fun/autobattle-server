@@ -342,6 +342,10 @@ export async function playRound(matchId) {
 
   const finishedRound = phase === "ENDED" ? gs.roundNumber : gs.roundNumber - 1;
 
+  let roundWinningOutcome = null;
+  if (gs.p1Hp < redHpBefore) roundWinningOutcome = "NO"; // Blue won
+  else if (gs.p2Hp < blueHpBefore) roundWinningOutcome = "YES"; // Red won
+
   const roundMarketsToResolve = await prisma.market.findMany({
     where: {
       matchId: match.id,
@@ -357,7 +361,11 @@ export async function playRound(matchId) {
       targetRound: finishedRound,
       marketType: "MID_GAME",
     },
-    data: { status: "RESOLVED" },
+    data: {
+      status: "RESOLVED",
+      winningOutcome: roundWinningOutcome,
+      resolvesAt: new Date()
+    },
   });
 
   for (const m of roundMarketsToResolve) {
@@ -424,6 +432,10 @@ export async function playRound(matchId) {
     const finishedRoundTb =
       phase === "ENDED" ? gs.roundNumber : gs.roundNumber - 1;
 
+    let tbWinningOutcome = null;
+    if (gs.p1Hp < redHpBefore) tbWinningOutcome = "NO";
+    else if (gs.p2Hp < blueHpBefore) tbWinningOutcome = "YES";
+
     const tbRoundMarketsToResolve = await prisma.market.findMany({
       where: {
         matchId: match.id,
@@ -439,7 +451,11 @@ export async function playRound(matchId) {
         targetRound: finishedRoundTb,
         marketType: "MID_GAME",
       },
-      data: { status: "RESOLVED" },
+      data: {
+        status: "RESOLVED",
+        winningOutcome: tbWinningOutcome,
+        resolvesAt: new Date(),
+      },
     });
 
     for (const m of tbRoundMarketsToResolve) {

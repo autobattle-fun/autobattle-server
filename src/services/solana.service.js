@@ -262,17 +262,17 @@ class SolanaService {
 
     const remainingAccounts = marketPda
       ? [
-          {
-            pubkey: new PublicKey(marketPda),
-            isWritable: true,
-            isSigner: false,
-          },
-          {
-            pubkey: PRED_MARKET_PROGRAM_ID,
-            isWritable: false,
-            isSigner: false,
-          },
-        ]
+        {
+          pubkey: new PublicKey(marketPda),
+          isWritable: true,
+          isSigner: false,
+        },
+        {
+          pubkey: PRED_MARKET_PROGRAM_ID,
+          isWritable: false,
+          isSigner: false,
+        },
+      ]
       : [];
 
     const txSig = await this.gameEngine.methods
@@ -329,7 +329,7 @@ class SolanaService {
         else if (gs.p2Score > 21) gs.p2Hp -= 1;
         else if (gs.p1Score > gs.p2Score) gs.p2Hp -= 1;
         else if (gs.p1Score < gs.p2Score) gs.p1Hp -= 1;
-        
+
         if (gs.p1Hp <= 0 || gs.p2Hp <= 0) gs.phase = { ended: {} };
         else {
           gs.roundNumber += 1;
@@ -352,51 +352,74 @@ class SolanaService {
       ? this.getAgentKeypair(agentColor)
       : this.crankKeypair;
 
-    // 1. Create randomness account
-    const rngKeypair = Keypair.generate();
-    const [randomness, createIx] = await sb.Randomness.create(
-      this._sbProgram,
-      rngKeypair,
-      this._sbQueue.pubkey,
-    );
+    let rngPubkey;
 
-    await this.provider.sendAndConfirm(
-      new anchor.web3.Transaction().add(
-        ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
-        createIx,
-      ),
-      [rngKeypair],
-    );
+    // --- FIX: Check if the PDA already exists to prevent "already in use" errors during retries ---
+    const vrfReqInfo = await this.connection.getAccountInfo(vrfRequestPda);
 
-    // 2. Commit + Request VRF (atomic)
-    const commitIx = await randomness.commitIx(this._sbQueue.pubkey);
-    const reqIx = await this.gameEngine.methods
-      .requestVrf(rollType)
-      .accounts({
-        gameState: gamePda,
-        vrfRequest: vrfRequestPda,
-        randomnessAccount: rngKeypair.publicKey,
-        agent: signerKp.publicKey,
-        systemProgram: SystemProgram.programId,
-      })
-      .instruction();
+    if (vrfReqInfo) {
+      const vrfReqData = await this.gameEngine.account.vrfRequest.fetch(vrfRequestPda);
 
-    const commitTx = new anchor.web3.Transaction().add(commitIx, reqIx);
-    // Include agent keypair as additional signer if it's not the crank
-    const commitSigners = isAgentSigned ? [signerKp] : [];
-    await this.provider.sendAndConfirm(commitTx, commitSigners);
+      // If the VRF was already successfully fulfilled before a network timeout, skip retry.
+      if (vrfReqData.consumed) {
+        logger.info("VRF step already consumed on-chain, skipping retry.", { gameId, rollType });
+        return "ALREADY_CONSUMED";
+      }
+
+      rngPubkey = vrfReqData.sbAccount;
+      logger.info("Recovered existing VRF request. Retrying reveal/fulfill...", { gameId, rollType });
+    } else {
+      // 1. Create randomness account (Normal Flow)
+      const rngKeypair = Keypair.generate();
+      rngPubkey = rngKeypair.publicKey;
+
+      const [randomness, createIx] = await sb.Randomness.create(
+        this._sbProgram,
+        rngKeypair,
+        this._sbQueue.pubkey,
+      );
+
+      await this.provider.sendAndConfirm(
+        new anchor.web3.Transaction().add(
+          ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+          createIx,
+        ),
+        [rngKeypair],
+      );
+
+      // 2. Commit + Request VRF (atomic)
+      const commitIx = await randomness.commitIx(this._sbQueue.pubkey);
+      const reqIx = await this.gameEngine.methods
+        .requestVrf(rollType)
+        .accounts({
+          gameState: gamePda,
+          vrfRequest: vrfRequestPda,
+          randomnessAccount: rngPubkey,
+          agent: signerKp.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .instruction();
+
+      const commitTx = new anchor.web3.Transaction().add(commitIx, reqIx);
+      // Include agent keypair as additional signer if it's not the crank
+      const commitSigners = isAgentSigned ? [signerKp] : [];
+      await this.provider.sendAndConfirm(commitTx, commitSigners);
+    }
 
     // 3. Wait for oracle to settle
     await this._sleep(VRF_SETTLE_DELAY_MS);
 
     // 4. Reveal + Fulfill (atomic)
+    // Instantiate the randomness object using the pubkey we either created or recovered
+    const randomness = new sb.Randomness(this._sbProgram, rngPubkey);
+
     const revealIx = await randomness.revealIx();
     const fillIx = await this.gameEngine.methods
       .fulfillVrf()
       .accounts({
         gameState: gamePda,
         vrfRequest: vrfRequestPda,
-        randomnessAccount: rngKeypair.publicKey,
+        randomnessAccount: rngPubkey,
         crank: crank,
         systemProgram: SystemProgram.programId,
       })
@@ -497,7 +520,7 @@ class SolanaService {
   async retrieveLp(marketPdaAddress, vaultPdaAddress) {
     if (env.MOCK_SOLANA) return this._generateMockTx();
     const crank = this.crankKeypair.publicKey;
-    
+
     const autoMint = env.AUTO_TOKEN_ADDRESS
       ? new PublicKey(env.AUTO_TOKEN_ADDRESS)
       : crank; // Fallback for testing
@@ -515,7 +538,7 @@ class SolanaService {
       })
       .signers([this.crankKeypair])
       .rpc();
-      
+
     logger.info("LP retrieved for market", { marketPdaAddress, txSig });
     return txSig;
   }

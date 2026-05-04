@@ -1190,10 +1190,10 @@ export async function verifyTrade(req, res) {
 
     // 6. Ensure the User exists in your DB
     const userRecord = await prisma.user.upsert({
-      where: { privyUserId: userPubkey },
+      where: { id: userPubkey },
       update: {},
       create: {
-        privyUserId: userPubkey,
+        id: userPubkey,
         username: `user_${userPubkey.slice(0, 6)}`,
         walletAddress: userPubkey,
       },
@@ -1511,7 +1511,7 @@ export async function verifySell(req, res) {
           : side.toUpperCase();
 
     const userRecord = await prisma.user.findUnique({
-      where: { privyUserId: userPubkey },
+      where: { id: userPubkey },
     });
     if (!userRecord)
       return res.status(404).json({ success: false, error: "User not found." });

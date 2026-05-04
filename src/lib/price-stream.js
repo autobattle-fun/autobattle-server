@@ -55,12 +55,15 @@ function calculatePrices(yesSupply, noSupply) {
 }
 
 function decodeMarketAccount(accountInfo) {
-  return coder.accounts.decode("market", accountInfo.data);
+  return coder.accounts.decode("Market", accountInfo.data);
 }
 
 function formatMarketData(cached, decodedMarket) {
-  const yesSupply = decodedMarket.yesSupply.toNumber();
-  const noSupply = decodedMarket.noSupply.toNumber();
+  // Use snake_case because raw BorshCoder maps directly to the IDL names
+  const yesSupply = (decodedMarket.yesSupply || decodedMarket.yes_supply).toNumber();
+  const noSupply = (decodedMarket.noSupply || decodedMarket.no_supply).toNumber();
+  const totalVolume = (decodedMarket.totalVolume || decodedMarket.total_volume).toNumber();
+
   const { yesPrice, noPrice } = calculatePrices(yesSupply, noSupply);
 
   return {
@@ -71,7 +74,7 @@ function formatMarketData(cached, decodedMarket) {
     status: decodedMarket.resolved ? "RESOLVED" : "OPEN",
     yesPrice,
     noPrice,
-    totalVolumeRaw: decodedMarket.totalVolume.toNumber(),
+    totalVolumeRaw: totalVolume,
   };
 }
 
