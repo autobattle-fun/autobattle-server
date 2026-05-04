@@ -364,6 +364,10 @@
   ],
   "events": [
     {
+      "name": "LPWithdrawn",
+      "discriminator": [27, 124, 4, 123, 54, 30, 43, 178]
+    },
+    {
       "name": "MarketCreated",
       "discriminator": [88, 184, 130, 231, 226, 84, 6, 58]
     },
@@ -468,9 +472,43 @@
       "code": 6015,
       "name": "InvalidMint",
       "msg": "Invalid mint account"
+    },
+    {
+      "code": 6016,
+      "name": "InvalidMarketIndex",
+      "msg": "Market index must be less than 250."
+    },
+    {
+      "code": 6017,
+      "name": "TradeTooSmall",
+      "msg": "Trade amount is too small, resulting in zero fees."
     }
   ],
   "types": [
+    {
+      "name": "LPWithdrawn",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "game_id",
+            "type": "u64"
+          },
+          {
+            "name": "market_index",
+            "type": "u8"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
     {
       "name": "Market",
       "type": {
@@ -695,6 +733,10 @@
           {
             "name": "shares_out",
             "type": "u64"
+          },
+          {
+            "name": "fee",
+            "type": "u64"
           }
         ]
       }
@@ -731,6 +773,10 @@
           {
             "name": "amount_out",
             "type": "u64"
+          },
+          {
+            "name": "fee",
+            "type": "u64"
           }
         ]
       }
@@ -740,6 +786,10 @@
       "type": {
         "kind": "struct",
         "fields": [
+          {
+            "name": "is_initialized",
+            "type": "bool"
+          },
           {
             "name": "user",
             "type": "pubkey"

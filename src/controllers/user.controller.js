@@ -26,6 +26,9 @@ export async function meController(request, response) {
     },
   );
 
+  const lamports = await connection.getBalance(walletPublicKey);
+  const solBalance = lamports / LAMPORTS_PER_SOL;
+
   let splTokenBalance = 0;
 
   if (tokenAccounts.value.length > 0) {
@@ -37,6 +40,7 @@ export async function meController(request, response) {
     user: request.auth.user,
     metadata: {
       splTokenBalance,
+      solBalance,
     },
   });
 }

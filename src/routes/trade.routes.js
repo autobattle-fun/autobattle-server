@@ -10,6 +10,8 @@ import {
   getMyMarketSharesController,
   buildTransferController,
   verifyTransferController,
+  buildSolTransferController,
+  verifySolTransferController,
 } from "../controllers/trade.controller.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { requireAdminKey } from "../middlewares/admin-auth.js";
@@ -64,4 +66,16 @@ tradeRoutes.post(
   "/:marketId/retrieve-lp",
   requireAdminKey,
   asyncHandler(retrieveLpController),
+);
+
+// Transfer Native SOL (Devnet)
+tradeRoutes.post(
+  "/transfer-sol/build",
+  requireAuth,
+  asyncHandler(buildSolTransferController),
+);
+tradeRoutes.post(
+  "/transfer-sol/verify",
+  requireAuth,
+  asyncHandler(verifySolTransferController),
 );

@@ -114,8 +114,14 @@ class SolanaService {
         gameId: new BN(gameId),
         agentRed: this.agentRedKeypair.publicKey,
         agentBlue: this.agentBlueKeypair.publicKey,
-        p1Hp: 10, p2Hp: 10, p1Score: 0, p2Score: 0,
-        p1Aces: 0, p2Aces: 0, p1Stayed: false, p2Stayed: false,
+        p1Hp: 10,
+        p2Hp: 10,
+        p1Score: 0,
+        p2Score: 0,
+        p1Aces: 0,
+        p2Aces: 0,
+        p1Stayed: false,
+        p2Stayed: false,
         roundNumber: 1,
         phase: { awaitingInitialDealVrf: {} },
         activePlayer: { red: {} },
@@ -155,7 +161,9 @@ class SolanaService {
 
   async fetchRegistry() {
     if (env.MOCK_SOLANA) {
-      return { gameCount: new BN(Object.keys(this._mockGames || {}).length + 20) };
+      return {
+        gameCount: new BN(Object.keys(this._mockGames || {}).length + 20),
+      };
     }
     const [registryPda] = deriveRegistryPda();
     return this.gameEngine.account.registry.fetch(registryPda);
@@ -232,7 +240,8 @@ class SolanaService {
   async stay(gameId, player) {
     if (env.MOCK_SOLANA) {
       const gs = this._getMockGameState(gameId);
-      if (player === "RED") gs.p1Stayed = true; else gs.p2Stayed = true;
+      if (player === "RED") gs.p1Stayed = true;
+      else gs.p2Stayed = true;
       return this._generateMockTx();
     }
     const [gamePda] = deriveGamePda(gameId);
@@ -255,25 +264,18 @@ class SolanaService {
     return txSig;
   }
 
-  async resolveRound(gameId, marketPda) {
+  async resolveRound(gameId) {
     const [registryPda] = deriveRegistryPda();
     const [gamePda] = deriveGamePda(gameId);
     const crank = this.crankKeypair.publicKey;
 
-    const remainingAccounts = marketPda
-      ? [
-        {
-          pubkey: new PublicKey(marketPda),
-          isWritable: true,
-          isSigner: false,
-        },
-        {
-          pubkey: PRED_MARKET_PROGRAM_ID,
-          isWritable: false,
-          isSigner: false,
-        },
-      ]
-      : [];
+    // Fetch current state to know the round number
+    const currentState = await this.gameEngine.account.gameState.fetch(gamePda);
+    const currentRound = currentState.roundNumber;
+
+    // Derive BOTH markets to satisfy the new contract requirements
+    const [roundMarketPda] = deriveMarketPda(gameId, currentRound);
+    const [mainMarketPda] = deriveMarketPda(gameId, 0);
 
     const txSig = await this.gameEngine.methods
       .resolveRound()
@@ -282,13 +284,16 @@ class SolanaService {
         gameState: gamePda,
         crank: crank,
       })
-      .remainingAccounts(remainingAccounts)
+      .remainingAccounts([
+        { pubkey: roundMarketPda, isWritable: true, isSigner: false }, // index 0 (Round)
+        { pubkey: mainMarketPda, isWritable: true, isSigner: false }, // index 1 (Main)
+        { pubkey: PRED_MARKET_PROGRAM_ID, isWritable: false, isSigner: false },
+      ])
       .rpc();
 
     logger.info("Round resolved", { gameId, txSig });
     return txSig;
   }
-
   // ── VRF Lifecycle ───────────────────────────────────────────────
 
   /**
@@ -311,21 +316,26 @@ class SolanaService {
     if (env.MOCK_SOLANA) {
       const gs = this._getMockGameState(gameId);
       // Simulate state changes based on rollType
-      if (rollType === 0) { // INITIAL_DEAL
+      if (rollType === 0) {
+        // INITIAL_DEAL
         gs.p1Score = Math.floor(Math.random() * 10) + 1;
         gs.p2Score = Math.floor(Math.random() * 10) + 1;
         gs.phase = { agentTurns: {} };
-      } else if (rollType === 1) { // HIT
-        if (agentColor === "RED") gs.p1Score += Math.floor(Math.random() * 10) + 1;
+      } else if (rollType === 1) {
+        // HIT
+        if (agentColor === "RED")
+          gs.p1Score += Math.floor(Math.random() * 10) + 1;
         else gs.p2Score += Math.floor(Math.random() * 10) + 1;
         if (gs.p1Score >= 21) gs.p1Stayed = true;
         if (gs.p2Score >= 21) gs.p2Stayed = true;
-      } else if (rollType === 2) { // FINAL_REVEAL
+      } else if (rollType === 2) {
+        // FINAL_REVEAL
         gs.p1Score += Math.floor(Math.random() * 10) + 1;
         gs.p2Score += Math.floor(Math.random() * 10) + 1;
         // Simple win/lose logic for simulation
-        if (gs.p1Score > 21 && gs.p2Score > 21) { /* tie */ }
-        else if (gs.p1Score > 21) gs.p1Hp -= 1;
+        if (gs.p1Score > 21 && gs.p2Score > 21) {
+          /* tie */
+        } else if (gs.p1Score > 21) gs.p1Hp -= 1;
         else if (gs.p2Score > 21) gs.p2Hp -= 1;
         else if (gs.p1Score > gs.p2Score) gs.p2Hp -= 1;
         else if (gs.p1Score < gs.p2Score) gs.p1Hp -= 1;
@@ -333,8 +343,10 @@ class SolanaService {
         if (gs.p1Hp <= 0 || gs.p2Hp <= 0) gs.phase = { ended: {} };
         else {
           gs.roundNumber += 1;
-          gs.p1Score = 0; gs.p2Score = 0;
-          gs.p1Stayed = false; gs.p2Stayed = false;
+          gs.p1Score = 0;
+          gs.p2Score = 0;
+          gs.p1Stayed = false;
+          gs.p2Stayed = false;
           gs.phase = { awaitingInitialDealVrf: {} };
         }
       }
@@ -358,16 +370,17 @@ class SolanaService {
     const vrfReqInfo = await this.connection.getAccountInfo(vrfRequestPda);
 
     if (vrfReqInfo) {
-      const vrfReqData = await this.gameEngine.account.vrfRequest.fetch(vrfRequestPda);
+      const vrfReqData =
+        await this.gameEngine.account.vrfRequest.fetch(vrfRequestPda);
 
-      // If the VRF was already successfully fulfilled before a network timeout, skip retry.
-      if (vrfReqData.consumed) {
-        logger.info("VRF step already consumed on-chain, skipping retry.", { gameId, rollType });
-        return "ALREADY_CONSUMED";
-      }
-
+      // The 'consumed' field was removed from the smart contract.
+      // Because `fulfill_vrf` deletes the PDA entirely, if this account still exists,
+      // we know for a fact it is pending and needs to be revealed!
       rngPubkey = vrfReqData.sbAccount;
-      logger.info("Recovered existing VRF request. Retrying reveal/fulfill...", { gameId, rollType });
+      logger.info(
+        "Recovered existing VRF request. Retrying reveal/fulfill...",
+        { gameId, rollType },
+      );
     } else {
       // 1. Create randomness account (Normal Flow)
       const rngKeypair = Keypair.generate();

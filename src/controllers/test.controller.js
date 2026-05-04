@@ -344,6 +344,12 @@ export async function agentHit(req, res) {
   } catch (error) {
     console.error(`Hit error (${player}):`, error);
 
+    if (error.message.includes("AlreadyStayed")) {
+      return res.status(400).json({
+        success: false,
+        error: "Agent has already stayed and cannot hit.",
+      });
+    }
     // Catch common contract errors gracefully
     if (error.message.includes("NotYourTurn")) {
       return res
@@ -664,6 +670,14 @@ export async function buildTradeTransaction(req, res) {
     });
   } catch (error) {
     console.error("Build trade error:", error);
+    if (
+      error.message.includes("TradeTooSmall") ||
+      error.message.includes("ZeroAmount")
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Trade amount is too small." });
+    }
     return res.status(500).json({ success: false, error: error.message });
   }
 }
@@ -1471,6 +1485,14 @@ export async function buildSellTransaction(req, res) {
     });
   } catch (error) {
     console.error("Build sell error:", error);
+    if (
+      error.message.includes("TradeTooSmall") ||
+      error.message.includes("ZeroAmount")
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Trade amount is too small." });
+    }
     return res.status(500).json({ success: false, error: error.message });
   }
 }

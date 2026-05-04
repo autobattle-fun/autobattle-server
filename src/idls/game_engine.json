@@ -366,6 +366,10 @@
       "discriminator": [204, 146, 253, 187, 8, 61, 75, 29]
     },
     {
+      "name": "UpgradeUnlocked",
+      "discriminator": [22, 231, 147, 151, 166, 218, 221, 54]
+    },
+    {
       "name": "VrfRequested",
       "discriminator": [50, 56, 125, 141, 222, 176, 113, 18]
     }
@@ -480,6 +484,26 @@
       "code": 6021,
       "name": "UnauthorizedCrank",
       "msg": "Signer is not the authorized crank for this operation"
+    },
+    {
+      "code": 6022,
+      "name": "AlreadyStayed",
+      "msg": "Player has already stayed."
+    },
+    {
+      "code": 6023,
+      "name": "InvalidRollType",
+      "msg": "Invalid roll type requested."
+    },
+    {
+      "code": 6024,
+      "name": "VrfAlreadyPending",
+      "msg": "A VRF request is already pending for this game."
+    },
+    {
+      "code": 6025,
+      "name": "MissingMarketAccounts",
+      "msg": "Missing required prediction market accounts."
     }
   ],
   "types": [
@@ -584,6 +608,9 @@
         "variants": [
           {
             "name": "AwaitingInitialDeal"
+          },
+          {
+            "name": "AwaitingInitialDealVRF"
           },
           {
             "name": "AwaitingHitVRF"
@@ -812,6 +839,22 @@
           {
             "name": "damage_dealt",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UpgradeUnlocked",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "game_id",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
           }
         ]
       }

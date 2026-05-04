@@ -1,4 +1,4 @@
-import { PublicKey, Transaction } from "@solana/web3.js";
+import { PublicKey, Transaction, SystemProgram } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
@@ -93,29 +93,25 @@ const AUTO_MINT_ADDRESS = new PublicKey(
 );
 
 export async function buildTradeController(req, res) {
-  // 🔐 Security: We no longer accept userPubkey from the body!
   const { marketId, side, amountTokens } = req.body;
   const userRecord = req.auth?.user;
 
-  // Ensure the authenticated user has a linked wallet
   if (!userRecord || !userRecord.walletAddress) {
+    return res
+      .status(400)
+      .json({ success: false, error: "Unauthorized or missing wallet." });
+  }
+
+  if (amountTokens < 0.0001) {
     return res.status(400).json({
       success: false,
-      error: "User is not authenticated or has no linked wallet.",
+      error: "Trade amount too small. Minimum is 0.0001 $AUTO.",
     });
   }
 
   try {
-    // 🔐 Security: Use the authenticated user's wallet address directly
     const user = new PublicKey(userRecord.walletAddress);
     const market = await prisma.market.findUnique({ where: { id: marketId } });
-
-    if (!market || market.status !== "OPEN") {
-      return res
-        .status(400)
-        .json({ success: false, error: "Market not found or closed." });
-    }
-
     const marketPda = new PublicKey(market.marketPda);
     const vaultPda = new PublicKey(market.vaultPda);
     const userTokenAccount = getAssociatedTokenAddressSync(
@@ -128,29 +124,28 @@ export async function buildTradeController(req, res) {
       PRED_MARKET_PROGRAM_ID,
     );
 
-    const rawAmount = new BN(amountTokens * 1_000_000);
-    const minSharesOut = new BN(1);
-    const sideArg = side.toUpperCase() === "YES" ? { yes: {} } : { no: {} };
-
     const buyIx = await solanaService.predMarket.methods
-      .buyShares(sideArg, rawAmount, minSharesOut)
+      .buyShares(
+        side.toUpperCase() === "YES" ? { yes: {} } : { no: {} },
+        new BN(amountTokens * 1_000_000),
+        new BN(1),
+      )
       .accounts({
         market: marketPda,
         userPosition: positionPda,
         vault: vaultPda,
-        userTokenAccount: userTokenAccount,
-        user: user,
+        userTokenAccount,
+        user,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
       .instruction();
 
-    const feePayerAddress = await getOpenfortFeePayer();
-
     const tx = new Transaction().add(buyIx);
     const { blockhash } =
       await solanaService.connection.getLatestBlockhash("confirmed");
+
     tx.recentBlockhash = blockhash;
-    tx.feePayer = new PublicKey(feePayerAddress);
+    tx.feePayer = user; // ⛽️ USER PAYS GAS AND RENT
 
     const serializedTx = tx.serialize({
       requireAllSignatures: false,
@@ -160,176 +155,77 @@ export async function buildTradeController(req, res) {
     return res.status(200).json({
       success: true,
       transaction: serializedTx.toString("base64"),
-      feePayer: feePayerAddress,
+      // feePayer is now the user
     });
   } catch (error) {
-    console.error("Build trade error:", error);
     return res.status(500).json({ success: false, error: error.message });
   }
 }
 
 export async function verifyTradeController(req, res) {
-  // 🔐 Security: userPubkey is removed from body.
-  const { partiallySignedBase64, feePayer, marketId, side, amountTokens } =
-    req.body;
+  const { signature, marketId, side, amountTokens } = req.body;
   const userRecord = req.auth?.user;
 
-  // Ensure the authenticated user has a linked wallet
-  if (!userRecord || !userRecord.walletAddress) {
-    return res.status(400).json({
-      success: false,
-      error: "User is not authenticated or has no linked wallet.",
-    });
-  }
-
-  if (!partiallySignedBase64 || !feePayer || !marketId) {
-    return res
-      .status(400)
-      .json({ success: false, error: "Missing required fields." });
-  }
-
   try {
-    // Confirm using blockhash strategy
+    // 1. Confirm the transaction the user already sent
     const { blockhash, lastValidBlockHeight } =
       await solanaService.connection.getLatestBlockhash("confirmed");
-
-    // 1. Send to Openfort to Co-Sign (Pay Gas) and Broadcast
-    const paymasterRes = await fetch(
-      "https://api.openfort.io/rpc/solana/devnet",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${env.OPENFORT_PROJECT_KEY}`,
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "signAndSendTransaction",
-          params: {
-            transaction: partiallySignedBase64,
-            signer_key: feePayer,
-            policy: env.OPENFORT_POLICY_ID,
-          },
-        }),
-      },
-    );
-
-    const paymasterData = await paymasterRes.json();
-
-    if (paymasterData.error) {
-      console.error("Openfort Paymaster Error:", paymasterData.error);
-      return res
-        .status(400)
-        .json({ success: false, error: "Paymaster failed." });
-    }
-
-    const signedTransaction = paymasterData.result?.signed_transaction;
-    if (!signedTransaction) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Invalid paymaster response." });
-    }
-
-    // Openfort already broadcast it — just extract the signature
-    const txBuffer = Buffer.from(signedTransaction, "base64");
-    const decodedTx = Transaction.from(txBuffer);
-    const signature = bs58.encode(decodedTx.signatures[0].signature);
-
-    console.log(`[BLOCKCHAIN] Tx broadcasted by Openfort: ${signature}`);
-
     await solanaService.connection.confirmTransaction(
       { signature, blockhash, lastValidBlockHeight },
       "confirmed",
     );
 
-    const txInfo = await solanaService.connection.getParsedTransaction(
-      signature,
-      {
-        maxSupportedTransactionVersion: 0,
-        commitment: "confirmed",
-      },
-    );
-
-    if (!txInfo || txInfo.meta?.err) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Transaction failed on-chain." });
-    }
-
-    const logs = txInfo.meta.logMessages || [];
-    if (!logs.some((log) => log.includes(PRED_MARKET_PROGRAM_ID.toBase58()))) {
-      return res.status(403).json({
-        success: false,
-        error: "Fraud alert: Invalid program interaction.",
-      });
-    }
-
-    // 4. Fetch the absolute Source of Truth from the Blockchain
+    // 2. Fetch Blockchain Truth
     const market = await prisma.market.findUnique({ where: { id: marketId } });
     const userPk = new PublicKey(userRecord.walletAddress);
-    const marketPda = new PublicKey(market.marketPda);
-
     const [positionPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("position"), marketPda.toBuffer(), userPk.toBuffer()],
+      [
+        Buffer.from("position"),
+        new PublicKey(market.marketPda).toBuffer(),
+        userPk.toBuffer(),
+      ],
       PRED_MARKET_PROGRAM_ID,
     );
 
-    // Fetch exact balances from the smart contract
     const onChainPosition = await solanaService.fetchUserPosition(
       positionPda.toBase58(),
     );
+    const exactShares =
+      side.toUpperCase() === "YES"
+        ? onChainPosition.yesShares.toNumber() / 1_000_000
+        : onChainPosition.noShares.toNumber() / 1_000_000;
 
-    // Divide by 1,000,000 to handle your 6 decimals
-    const exactYesShares = onChainPosition.yesShares.toNumber() / 1_000_000;
-    const exactNoShares = onChainPosition.noShares.toNumber() / 1_000_000;
-
-    const exactSharesToSave =
-      side.toUpperCase() === "YES" ? exactYesShares : exactNoShares;
-
-    // 5. Upsert the Database to perfectly match the Blockchain
+    // 3. Sync Database
     const syncedPrediction = await prisma.prediction.upsert({
       where: {
-        userId_marketId_side: {
+        userMarketSide: {
           userId: userRecord.id,
           marketId: market.id,
           side: side.toUpperCase(),
         },
       },
       update: {
-        shareAmount: exactSharesToSave,
-        amount: { increment: amountTokens }, // Keep a running total of how many tokens they spent
+        shareAmount: exactShares,
+        amount: { increment: amountTokens },
       },
       create: {
         userId: userRecord.id,
         marketId: market.id,
         side: side.toUpperCase(),
         amount: amountTokens,
-        shareAmount: exactSharesToSave,
+        shareAmount: exactShares,
         positionPda: positionPda.toBase58(),
         hasClaimed: false,
       },
     });
 
-    return res.status(200).json({
-      success: true,
-      message: "Trade sponsored, executed, and synced perfectly.",
-      data: syncedPrediction,
-    });
+    return res.status(200).json({ success: true, data: syncedPrediction });
   } catch (error) {
-    console.error("Execute trade error:", error);
-    if (error.code === "P2002") {
-      return res.status(400).json({
-        success: false,
-        error: "This prediction has already been logged.",
-      });
-    }
     return res.status(500).json({ success: false, error: error.message });
   }
 }
 
 export async function buildSellController(req, res) {
-  // 🔐 Security: userPubkey is removed from body.
   const { marketId, side, amountShares } = req.body;
   const userRecord = req.auth?.user;
 
@@ -339,6 +235,12 @@ export async function buildSellController(req, res) {
       .json({ success: false, error: "Unauthorized or missing wallet." });
   }
 
+  if (amountShares < 0.0001) {
+    return res.status(400).json({
+      success: false,
+      error: "Share amount too small. Minimum is 0.0001 shares.",
+    });
+  }
   try {
     const user = new PublicKey(userRecord.walletAddress);
     const market = await prisma.market.findUnique({ where: { id: marketId } });
@@ -355,38 +257,32 @@ export async function buildSellController(req, res) {
       AUTO_MINT_ADDRESS,
       user,
     );
-
     const [positionPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("position"), marketPda.toBuffer(), user.toBuffer()],
-      solanaService.predMarket.programId, // Dynamic reference is safer
+      PRED_MARKET_PROGRAM_ID,
     );
 
-    // Assuming shares use 6 decimals in your contract
-    const rawAmount = new BN(Math.floor(amountShares * 1_000_000));
-    const minTokensOut = new BN(1); // Slippage protection
     const sideArg = side.toUpperCase() === "YES" ? { yes: {} } : { no: {} };
+    const rawAmount = new BN(Math.floor(amountShares * 1_000_000));
 
     const sellIx = await solanaService.predMarket.methods
-      .sellShares(sideArg, rawAmount, minTokensOut)
+      .sellShares(sideArg, rawAmount, new BN(1))
       .accounts({
         market: marketPda,
         userPosition: positionPda,
         vault: vaultPda,
-        userTokenAccount: userTokenAccount,
-        user: user,
-        // Optional: you might need to pass the tokenProgram if your contract expects it
+        userTokenAccount,
+        user,
+        tokenProgram: TOKEN_PROGRAM_ID,
       })
       .instruction();
 
     const tx = new Transaction().add(sellIx);
     const { blockhash } =
       await solanaService.connection.getLatestBlockhash("confirmed");
-    tx.recentBlockhash = blockhash;
 
-    // ⛽️ GASLESS FIX: Make Openfort the fee payer!
-    // Make sure OPENFORT_SPONSOR_KEY is set in your .env
-    const feePayerAddress = await getOpenfortFeePayer();
-    tx.feePayer = new PublicKey(feePayerAddress);
+    tx.recentBlockhash = blockhash;
+    tx.feePayer = user; // ⛽️ USER PAYS GAS (No Openfort here)
 
     const serializedTx = tx.serialize({
       requireAllSignatures: false,
@@ -396,160 +292,68 @@ export async function buildSellController(req, res) {
     return res.status(200).json({
       success: true,
       transaction: serializedTx.toString("base64"),
-      feePayer: feePayerAddress, // Pass string back to frontend
     });
   } catch (error) {
-    console.error("Build sell error:", error);
     return res.status(500).json({ success: false, error: error.message });
   }
 }
 
 export async function verifySellController(req, res) {
-  // 🔐 Notice we take partiallySignedBase64 and feePayer now
-  const { partiallySignedBase64, feePayer, marketId, side } = req.body;
+  const { signature, marketId, side } = req.body;
   const userRecord = req.auth?.user;
 
-  if (!userRecord || !userRecord.walletAddress) {
-    return res.status(401).json({ success: false, error: "Unauthorized." });
-  }
-
-  if (!partiallySignedBase64 || !feePayer || !marketId) {
-    return res
-      .status(400)
-      .json({ success: false, error: "Missing required fields." });
-  }
-
   try {
-    // Confirm using blockhash strategy
+    // 1. Confirm the transaction the user broadcasted from the frontend
     const { blockhash, lastValidBlockHeight } =
       await solanaService.connection.getLatestBlockhash("confirmed");
-
-    // 1. Send to Openfort Paymaster for execution
-    const paymasterRes = await fetch(
-      "https://api.openfort.io/rpc/solana/devnet",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${env.OPENFORT_PROJECT_KEY}`,
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "signAndSendTransaction",
-          // 🚨 DONT FORGET: Add the policy ID here so Openfort allows it!
-          params: {
-            transaction: partiallySignedBase64,
-            signer_key: feePayer,
-            policy: env.OPENFORT_POLICY_ID,
-          },
-        }),
-      },
-    );
-
-    const paymasterData = await paymasterRes.json();
-
-    if (paymasterData.error) {
-      console.error("Openfort Paymaster Error:", paymasterData.error);
-      return res
-        .status(400)
-        .json({ success: false, error: "Paymaster failed." });
-    }
-
-    const signedTransaction = paymasterData.result?.signed_transaction;
-    if (!signedTransaction) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Invalid paymaster response." });
-    }
-
-    // Openfort already broadcast it — just extract the signature
-    const txBuffer = Buffer.from(signedTransaction, "base64");
-    const decodedTx = Transaction.from(txBuffer);
-    const signature = bs58.encode(decodedTx.signatures[0].signature);
-
-    console.log(`[BLOCKCHAIN] Tx broadcasted by Openfort: ${signature}`);
-
     await solanaService.connection.confirmTransaction(
       { signature, blockhash, lastValidBlockHeight },
       "confirmed",
     );
-    // 3. Security verification
-    const txInfo = await solanaService.connection.getParsedTransaction(
-      signature,
-      { maxSupportedTransactionVersion: 0, commitment: "confirmed" },
-    );
 
-    if (!txInfo || txInfo.meta?.err) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Transaction failed on-chain." });
-    }
-
-    const logs = txInfo.meta.logMessages || [];
-    // Ensure the program was called (you can check specifically for SellShares if your contract logs it)
-    if (
-      !logs.some((log) =>
-        log.includes(solanaService.predMarket.programId.toBase58()),
-      )
-    ) {
-      return res
-        .status(403)
-        .json({ success: false, error: "Invalid contract interaction." });
-    }
-
-    // 4. Update the Database using the absolute Blockchain Truth
+    // 2. Fetch the absolute Source of Truth from the Blockchain
     const market = await prisma.market.findUnique({ where: { id: marketId } });
     const userPk = new PublicKey(userRecord.walletAddress);
-    const marketPda = new PublicKey(market.marketPda);
-
     const [positionPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("position"), marketPda.toBuffer(), userPk.toBuffer()],
-      solanaService.predMarket.programId,
+      [
+        Buffer.from("position"),
+        new PublicKey(market.marketPda).toBuffer(),
+        userPk.toBuffer(),
+      ],
+      PRED_MARKET_PROGRAM_ID,
     );
 
-    // Fetch the exact remaining shares from the contract
     const onChainPosition = await solanaService.fetchUserPosition(
       positionPda.toBase58(),
     );
-
     const exactYesShares = onChainPosition.yesShares.toNumber() / 1_000_000;
     const exactNoShares = onChainPosition.noShares.toNumber() / 1_000_000;
 
-    // Clean up the side variable formatting just to be safe
-    const dbSide =
-      side.toUpperCase() === "RED"
-        ? "YES"
-        : side.toUpperCase() === "BLUE"
-          ? "NO"
-          : side.toUpperCase();
+    const dbSide = side.toUpperCase();
     const exactSharesLeftToSave =
       dbSide === "YES" ? exactYesShares : exactNoShares;
 
-    // 5. Sync the DB!
-    await prisma.prediction.updateMany({
+    // 3. Sync the DB
+    await prisma.prediction.update({
       where: {
-        userId: userRecord.id,
-        marketId: market.id,
-        side: dbSide,
+        userMarketSide: {
+          userId: userRecord.id,
+          marketId: market.id,
+          side: dbSide,
+        },
       },
-      data: {
-        shareAmount: exactSharesLeftToSave,
-      },
+      data: { shareAmount: exactSharesLeftToSave },
     });
 
-    return res.status(200).json({
-      success: true,
-      message: "Sell sponsored, executed, and synced perfectly.",
-    });
+    return res
+      .status(200)
+      .json({ success: true, message: "Sell synced successfully." });
   } catch (error) {
-    console.error("Verify sell error:", error);
     return res.status(500).json({ success: false, error: error.message });
   }
 }
 
 export async function buildTransferController(req, res) {
-  // 🔐 Security: Sender is strictly pulled from the auth token
   const { recipientAddress, amountTokens } = req.body;
   const userRecord = req.auth?.user;
 
@@ -559,16 +363,9 @@ export async function buildTransferController(req, res) {
       .json({ success: false, error: "Unauthorized or missing wallet." });
   }
 
-  if (!recipientAddress || !amountTokens) {
-    return res
-      .status(400)
-      .json({ success: false, error: "Missing recipient or amount." });
-  }
-
   try {
     const sender = new PublicKey(userRecord.walletAddress);
     const recipient = new PublicKey(recipientAddress);
-
     const senderAta = getAssociatedTokenAddressSync(AUTO_MINT_ADDRESS, sender);
     const recipientAta = getAssociatedTokenAddressSync(
       AUTO_MINT_ADDRESS,
@@ -576,43 +373,36 @@ export async function buildTransferController(req, res) {
     );
 
     const tx = new Transaction();
-    const feePayerAddress = await getOpenfortFeePayer();
-    const feePayerKey = new PublicKey(feePayerAddress);
 
-    // 1. 🛡️ The ATA Check: Does the recipient have an account to hold $AUTO?
+    // 1. Check if recipient needs an ATA
     const recipientAtaInfo =
       await solanaService.connection.getAccountInfo(recipientAta);
-
     if (!recipientAtaInfo) {
-      console.log(`Creating ATA for recipient ${recipientAddress}...`);
-      // Openfort pays the rent for the new user's token account!
+      // User (sender) pays the rent for the recipient's new account
       tx.add(
         createAssociatedTokenAccountInstruction(
-          feePayerKey, // Payer
-          recipientAta, // Associated Token Account
-          recipient, // Owner
-          AUTO_MINT_ADDRESS, // Mint
+          sender,
+          recipientAta,
+          recipient,
+          AUTO_MINT_ADDRESS,
         ),
       );
     }
 
-    // 2. The Transfer Instruction (Assuming 6 decimals)
-    // Note: createTransferInstruction expects a BigInt or Number depending on your spl-token version
-    const rawAmount = Math.floor(amountTokens * 1_000_000);
-
+    // 2. Add Transfer instruction
     tx.add(
       createTransferInstruction(
-        senderAta, // Source
-        recipientAta, // Destination
-        sender, // Owner of Source
-        rawAmount, // Amount
+        senderAta,
+        recipientAta,
+        sender,
+        Math.floor(amountTokens * 1_000_000),
       ),
     );
 
     const { blockhash } =
       await solanaService.connection.getLatestBlockhash("confirmed");
     tx.recentBlockhash = blockhash;
-    tx.feePayer = feePayerKey;
+    tx.feePayer = sender; // ⛽️ USER PAYS GAS AND RENT
 
     const serializedTx = tx.serialize({
       requireAllSignatures: false,
@@ -622,107 +412,31 @@ export async function buildTransferController(req, res) {
     return res.status(200).json({
       success: true,
       transaction: serializedTx.toString("base64"),
-      feePayer: feePayerAddress,
     });
   } catch (error) {
-    console.error("Build transfer error:", error);
     return res.status(500).json({ success: false, error: error.message });
   }
 }
 
 export async function verifyTransferController(req, res) {
-  const { partiallySignedBase64, feePayer } = req.body;
-  const userRecord = req.auth?.user;
-
-  if (!userRecord || !userRecord.walletAddress) {
-    return res.status(401).json({ success: false, error: "Unauthorized." });
-  }
-
-  if (!partiallySignedBase64 || !feePayer) {
-    return res
-      .status(400)
-      .json({ success: false, error: "Missing required fields." });
-  }
+  const { signature } = req.body;
 
   try {
-    // Confirm with blockhash strategy
     const { blockhash, lastValidBlockHeight } =
       await solanaService.connection.getLatestBlockhash("confirmed");
 
-    // 1. Send to Openfort Paymaster to sponsor the transfer (and potential ATA rent)
-    const paymasterRes = await fetch(
-      "https://api.openfort.io/rpc/solana/devnet",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${env.OPENFORT_PROJECT_KEY}`,
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "signAndSendTransaction",
-          params: {
-            transaction: partiallySignedBase64,
-            signer_key: feePayer,
-            policy: env.OPENFORT_POLICY_ID,
-          },
-        }),
-      },
-    );
-
-    const paymasterData = await paymasterRes.json();
-
-    if (paymasterData.error) {
-      console.error("Openfort Paymaster Error:", paymasterData.error);
-      return res
-        .status(400)
-        .json({ success: false, error: "Failed to sponsor transfer." });
-    }
-
-    const signedTransaction = paymasterData.result?.signed_transaction;
-
-    if (!signedTransaction) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Invalid paymaster response." });
-    }
-
-    // Decode and send the fully signed transaction to Solana directly
-    // ✅ Extract the signature from the already-broadcast signed transaction
-    const txBuffer = Buffer.from(signedTransaction, "base64");
-    const decodedTx = Transaction.from(txBuffer);
-    const signature = bs58.encode(decodedTx.signatures[0].signature);
-
-    console.log(`[BLOCKCHAIN] Transfer broadcasted: ${signature}`);
-
+    // Confirm the user's broadcasted signature
     await solanaService.connection.confirmTransaction(
       { signature, blockhash, lastValidBlockHeight },
       "confirmed",
     );
 
-    // 3. Security verification (Optional but recommended)
-    const txInfo = await solanaService.connection.getParsedTransaction(
-      signature,
-      { maxSupportedTransactionVersion: 0, commitment: "confirmed" },
-    );
-
-    if (!txInfo || txInfo.meta?.err) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Transfer failed on-chain." });
-    }
-
-    // You don't necessarily have to update the database for a transfer unless you are
-    // strictly tracking global wallet balances in Prisma outside of predictions.
-
     return res.status(200).json({
       success: true,
-      message: "Transfer successfully sponsored and executed.",
+      message: "Transfer verified successfully.",
       signature: signature,
     });
   } catch (error) {
-    console.error("Verify transfer error:", error);
     return res.status(500).json({ success: false, error: error.message });
   }
 }
@@ -970,6 +684,90 @@ export async function retrieveLpController(req, res) {
     });
   } catch (error) {
     console.error("Retrieve LP error:", error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+export async function buildSolTransferController(req, res) {
+  // 🔐 Security: Sender is strictly pulled from the auth token
+  const { recipientAddress, amountSol } = req.body;
+  const userRecord = req.auth?.user;
+
+  if (!userRecord || !userRecord.walletAddress) {
+    return res
+      .status(401)
+      .json({ success: false, error: "Unauthorized or missing wallet." });
+  }
+
+  if (!recipientAddress || !amountSol) {
+    return res
+      .status(400)
+      .json({ success: false, error: "Missing recipient or amount." });
+  }
+
+  try {
+    const sender = new PublicKey(userRecord.walletAddress);
+    const recipient = new PublicKey(recipientAddress);
+
+    const tx = new Transaction();
+
+    // Add Native SOL Transfer instruction (1 SOL = 1,000,000,000 Lamports)
+    tx.add(
+      SystemProgram.transfer({
+        fromPubkey: sender,
+        toPubkey: recipient,
+        lamports: Math.floor(amountSol * 1_000_000_000),
+      }),
+    );
+
+    const { blockhash } =
+      await solanaService.connection.getLatestBlockhash("confirmed");
+    tx.recentBlockhash = blockhash;
+    tx.feePayer = sender; // ⛽️ USER PAYS GAS
+
+    const serializedTx = tx.serialize({
+      requireAllSignatures: false,
+      verifySignatures: false,
+    });
+
+    return res.status(200).json({
+      success: true,
+      transaction: serializedTx.toString("base64"),
+    });
+  } catch (error) {
+    console.error("Build SOL transfer error:", error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+export async function verifySolTransferController(req, res) {
+  const { signature } = req.body;
+
+  if (!signature) {
+    return res
+      .status(400)
+      .json({ success: false, error: "Missing signature." });
+  }
+
+  try {
+    const { blockhash, lastValidBlockHeight } =
+      await solanaService.connection.getLatestBlockhash("confirmed");
+
+    // Confirm the user's broadcasted signature
+    await solanaService.connection.confirmTransaction(
+      { signature, blockhash, lastValidBlockHeight },
+      "confirmed",
+    );
+
+    // Note: No DB updates needed for pure SOL transfers unless you are explicitly tracking SOL balances in Prisma.
+
+    return res.status(200).json({
+      success: true,
+      message: "SOL Transfer verified successfully.",
+      signature: signature,
+    });
+  } catch (error) {
+    console.error("Verify SOL transfer error:", error);
     return res.status(500).json({ success: false, error: error.message });
   }
 }
