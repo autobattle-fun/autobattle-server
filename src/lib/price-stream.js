@@ -75,7 +75,7 @@ function formatMarketData(cached, decodedMarket) {
   };
 }
 
-function broadcastCombinedPrices(matchId) {
+export function getCurrentMarketPrices(matchId) {
   const payload = {};
   for (const [pda, cached] of marketCache.entries()) {
     if (cached.matchId === matchId) {
@@ -89,6 +89,11 @@ function broadcastCombinedPrices(matchId) {
       }
     }
   }
+  return payload;
+}
+
+function broadcastCombinedPrices(matchId) {
+  const payload = getCurrentMarketPrices(matchId);
 
   if (Object.keys(payload).length > 0) {
     wsEvents.marketPrices(matchId, payload);

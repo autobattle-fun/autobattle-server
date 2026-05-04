@@ -3,6 +3,7 @@ import { env } from "../config/env.js";
 import { logger } from "./logger.js";
 import { prisma } from "../db/prisma.js";
 import { getGameState, getMatchBreakCountdown } from "./game-state-store.js";
+import { addRoundSystemLog, getRoundSystemLogs } from "./system-log-state-store.js";
 import { notifyEvent } from "./telegram.js";
 
 // ── WebSocket Manager ───────────────────────────────────────────────
@@ -95,6 +96,8 @@ async function handlePing(socket, message) {
 
   let gameState = null;
   let countdown = null;
+  let logs = [];
+  let market = null;
 
   try {
     // Check for active or paused match
@@ -121,7 +124,12 @@ async function handlePing(socket, message) {
 
     if (activeMatch) {
       // Get detailed game state from Redis
+      logs = await getRoundSystemLogs(activeMatch.id);
       const redisState = await getGameState(activeMatch.gameId);
+
+      const { getCurrentMarketPrices } = await import("./price-stream.js");
+      const currentMarketPrices = getCurrentMarketPrices(activeMatch.id);
+      market = Object.keys(currentMarketPrices).length > 0 ? currentMarketPrices : null;
 
       const activePlayerColor = redisState?.activePlayer || "RED";
       const activePlayerName =
@@ -180,6 +188,8 @@ async function handlePing(socket, message) {
   socket.emit("pong", {
     latency,
     gameState,
+    market,
+    logs,
     countdown,
     serverTimestamp,
   });
@@ -225,7 +235,7 @@ export function broadcast(eventType, payload, matchId) {
   logger.info("WebSocket broadcast", { eventType, matchId });
 
   // Forward to Telegram (fire-and-forget, never block the broadcast)
-  notifyEvent(eventType, payload, matchId).catch(() => {});
+  notifyEvent(eventType, payload, matchId).catch(() => { });
 }
 
 /**
@@ -296,12 +306,14 @@ export const wsEvents = {
     broadcastNoTelegram("market:prices", prices, matchId);
   },
 
-  logBroadcast(role, log) {
+  logBroadcast(role, log, matchId) {
     broadcast("log:broadcast", {
       role,
       log,
-      timeStamp: new Date().toISOString(),
-    });
+      timeStamp: Date.now(),
+    }, matchId);
+
+    addRoundSystemLog(matchId, role, log);
   },
 
   pong(data) {

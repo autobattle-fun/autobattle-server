@@ -1057,15 +1057,7 @@ export const fireEventMethods = {
   },
   fireLogBroadcast: async (req, res) => {
     try {
-      broadcast(
-        "log:broadcast",
-        {
-          role: "red",
-          message: "I Hit the card because I wanted to",
-          timestamp: Date.now(),
-        },
-        999,
-      );
+      wsEvents.logBroadcast("red", "I Hit the card because I wanted to", 999);
       res.json({ success: true, message: "Fired logBroadcast" });
     } catch (e) {
       res.status(500).json({ success: false, error: e.message });

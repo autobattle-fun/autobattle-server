@@ -78,6 +78,8 @@ model MatchRound {
   riverBlueCard   Json? // Single card object
   tiebreakerCards Json  @default("[]") // Array of tiebreaker card pairs
 
+  roundSystemLogs Json @default("[]") // System logs for the given round
+
   createdAt DateTime @default(now())
 
   moves RoundMove[]

@@ -26,6 +26,10 @@ import {
   clearMatchLogs,
 } from "../lib/game-state-store.js";
 import {
+  getRoundSystemLogs,
+  clearRoundSystemLogs,
+} from "../lib/system-log-state-store.js";
+import {
   deriveGamePda,
   deriveMarketPda,
   deriveVaultPda,
@@ -485,6 +489,17 @@ export async function playRound(matchId) {
       tiebreakerCards: state?.tiebreakerCards || [],
     },
   });
+
+  const roundSystemLogs = await getRoundSystemLogs(matchId);
+
+  if (roundSystemLogs.length > 0) {
+    await prisma.matchRound.update({
+      where: { id: roundLog.id },
+      data: { roundSystemLogs },
+    });
+
+    await clearRoundSystemLogs(matchId);
+  }
 
   // Persist individual moves
   if (state?.moves?.length > 0) {
