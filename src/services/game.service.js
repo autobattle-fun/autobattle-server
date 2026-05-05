@@ -634,15 +634,38 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
     const scoreBefore = myScore;
 
     if (action === "HIT") {
-      const txSig = await withRetry(
-        () => solanaService.vrfStep(gameId, ROLL_TYPE.HIT, player),
-        { label: `vrfStep:HIT:${player}`, matchId: match.id, gameId },
-      );
+      let txSig;
+      try {
+        txSig = await withRetry(
+          () => solanaService.vrfStep(gameId, ROLL_TYPE.HIT, player),
+          { label: `vrfStep:HIT:${player}`, matchId: match.id, gameId },
+        );
+      } catch (hitError) {
+        if (hitError.message && hitError.message.includes("AlreadyStayed")) {
+          logger.warn("Agent tried to HIT after staying — forced STAY", { gameId, player });
+          return;
+        }
+        throw hitError;
+      }
       const updated = await solanaService.fetchGameState(gameId);
 
       const newScore = isRed ? updated.p1Score : updated.p2Score;
       const newAces = isRed ? updated.p1Aces : updated.p2Aces;
-      const card = inferCard(myScore, newScore, myAces, newAces);
+      const rawCardValue = isRed ? updated.p1LastCard : updated.p2LastCard;
+      
+      let card;
+      if (rawCardValue) {
+        let label = String(rawCardValue);
+        if (rawCardValue === 1) label = "A";
+        else if (rawCardValue === 11) label = "J";
+        else if (rawCardValue === 12) label = "Q";
+        else if (rawCardValue === 13) label = "K";
+        
+        const inferred = inferCard(myScore, newScore, myAces, newAces);
+        card = { value: inferred.value, label };
+      } else {
+        card = inferCard(myScore, newScore, myAces, newAces);
+      }
       await recordCardDealt(gameId, player, card);
 
       await recordMove(gameId, {
@@ -1011,6 +1034,8 @@ function serializeGameState(gs) {
     p2Aces: gs.p2Aces,
     p1Stayed: gs.p1Stayed,
     p2Stayed: gs.p2Stayed,
+    p1LastCard: gs.p1LastCard,
+    p2LastCard: gs.p2LastCard,
     roundNumber: gs.roundNumber,
     phase: parseGamePhase(gs.phase),
     activePlayer: parseColor(gs.activePlayer),

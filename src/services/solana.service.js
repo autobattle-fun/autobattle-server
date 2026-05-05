@@ -320,7 +320,7 @@ class SolanaService {
         // INITIAL_DEAL
         gs.p1Score = Math.floor(Math.random() * 10) + 1;
         gs.p2Score = Math.floor(Math.random() * 10) + 1;
-        gs.phase = { agentTurns: {} };
+        gs.phase = { awaitingAction: {} };
       } else if (rollType === 1) {
         // HIT
         if (agentColor === "RED")

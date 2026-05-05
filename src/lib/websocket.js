@@ -193,79 +193,88 @@ async function handlePing(socket, message) {
 
   socket.emit("pong", {
     latency,
-    gameState: {
-      gameId: 999,
-      gameStatus: "ACTIVE",
-      serverStatus: "ACTIVE",
-      activePlayer: { color: "RED", name: "Donald Trump" },
-      playerStatus: { red: "THINKING", blue: "WAITING" },
-      phase: "RedTurn",
-      roundNumber: 3,
-      red: {
-        hp: 9,
-        score: 15,
-        name: "Donald Trump",
-        llm: "llama-3",
-        cards: [
-          { value: 7, label: "7" },
-          { value: 8, label: "8" },
-        ],
-      },
-      blue: {
-        hp: 8,
-        score: 12,
-        name: "Joe Biden",
-        llm: "mixtral",
-        cards: [
-          { value: 10, label: "10" },
-          { value: 2, label: "2" },
-        ],
-      },
-    },
-    market: {
-      mainMarket: {
-        id: "cmorr18i90001rv8ooo76x7ax",
-        matchId: "cmorr18i90001rv8ooo76x7ax",
-        marketIndex: 0,
-        targetRound: null,
-        status: "OPEN",
-
-        yesPrice: 0.5,
-        noPrice: 0.5,
-        totalVolumeRaw: 0,
-      },
-      roundMarket: {
-        id: "cmorr18pw0002rv8obnhsxg4x",
-        matchId: "cmorr18pw0002rv8obnhsxg4x",
-        marketIndex: 1,
-        targetRound: 1,
-        status: "OPEN",
-
-        yesPrice: 0.5,
-        noPrice: 0.5,
-        totalVolumeRaw: 0,
-      },
-    },
-    logs: [
-      {
-        role: "red",
-        message: "I Hit the card because I wanted to",
-        timestamp: serverTimestamp,
-      },
-      {
-        role: "blue",
-        message: "I used 10. I think it will work. I believe this is the best.",
-        timestamp: serverTimestamp - 1000,
-      },
-      {
-        role: "system",
-        message: "Smart Contract initialized. Awaiting Phase 1...",
-        timestamp: serverTimestamp - 2000,
-      },
-    ],
-    countdown: 228,
+    gameState,
+    market,
+    logs,
+    countdown,
     serverTimestamp,
   });
+
+  // Test pong data
+  // socket.emit("pong", {
+  //   latency,
+  //       gameState: {
+  //     gameId: 999,
+  //     gameStatus: "ACTIVE",
+  //     serverStatus: "ACTIVE",
+  //     activePlayer: { color: "RED", name: "Donald Trump" },
+  //     playerStatus: { red: "THINKING", blue: "WAITING" },
+  //     phase: "RedTurn",
+  //     roundNumber: 3,
+  //     red: {
+  //       hp: 9,
+  //       score: 15,
+  //       name: "Donald Trump",
+  //       llm: "llama-3",
+  //       cards: [
+  //         { value: 7, label: "7" },
+  //         { value: 8, label: "8" },
+  //       ],
+  //     },
+  //     blue: {
+  //       hp: 8,
+  //       score: 12,
+  //       name: "Joe Biden",
+  //       llm: "mixtral",
+  //       cards: [
+  //         { value: 10, label: "10" },
+  //         { value: 2, label: "2" },
+  //       ],
+  //     },
+  //   },
+  //   market: {
+  //     mainMarket: {
+  //       id: "cmorr18i90001rv8ooo76x7ax",
+  //       matchId: "cmorr18i90001rv8ooo76x7ax",
+  //       marketIndex: 0,
+  //       targetRound: null,
+  //       status: "OPEN",
+
+  //       yesPrice: 0.5,
+  //       noPrice: 0.5,
+  //       totalVolumeRaw: 0,
+  //     },
+  //     roundMarket: {
+  //       id: "cmorr18pw0002rv8obnhsxg4x",
+  //       matchId: "cmorr18pw0002rv8obnhsxg4x",
+  //       marketIndex: 1,
+  //       targetRound: 1,
+  //       status: "OPEN",
+
+  //       yesPrice: 0.5,
+  //       noPrice: 0.5,
+  //       totalVolumeRaw: 0,
+  //     },
+  //   },
+  //   logs: [
+  //     {
+  //       role: "red",
+  //       message: "I Hit the card because I wanted to",
+  //       timestamp: serverTimestamp,
+  //     },
+  //     {
+  //       role: "blue",
+  //       message: "I used 10. I think it will work. I believe this is the best.",
+  //       timestamp: serverTimestamp - 1000,
+  //     },
+  //     {
+  //       role: "system",
+  //       message: "Smart Contract initialized. Awaiting Phase 1...",
+  //       timestamp: serverTimestamp - 2000,
+  //     },
+  //   ],
+  //   countdown: 228,
+  // })
 }
 
 // ── Event Broadcasting ──────────────────────────────────────────────
@@ -308,7 +317,7 @@ export function broadcast(eventType, payload, matchId) {
   logger.info("WebSocket broadcast", { eventType, matchId });
 
   // Forward to Telegram (fire-and-forget, never block the broadcast)
-  notifyEvent(eventType, payload, matchId).catch(() => {});
+  notifyEvent(eventType, payload, matchId).catch(() => { });
 }
 
 /**
