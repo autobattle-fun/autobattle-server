@@ -570,12 +570,22 @@ export async function playRound(matchId) {
 
 async function runAgentTurns(gameId, initialGs, match) {
   let gs = initialGs;
-  if (!gs.p1Stayed) {
-    await runSingleAgentTurn(gameId, "RED", gs, match);
-    gs = await solanaService.fetchGameState(gameId);
-  }
-  if (!gs.p2Stayed) {
-    await runSingleAgentTurn(gameId, "BLUE", gs, match);
+  let currentPlayer = "RED";
+
+  while (!gs.p1Stayed || !gs.p2Stayed) {
+    if (currentPlayer === "RED") {
+      if (!gs.p1Stayed) {
+        await runSingleAgentTurn(gameId, "RED", gs, match);
+        gs = await solanaService.fetchGameState(gameId);
+      }
+      currentPlayer = "BLUE";
+    } else {
+      if (!gs.p2Stayed) {
+        await runSingleAgentTurn(gameId, "BLUE", gs, match);
+        gs = await solanaService.fetchGameState(gameId);
+      }
+      currentPlayer = "RED";
+    }
   }
 }
 
@@ -591,7 +601,9 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
   const myHp = isRed ? match.redHp : match.blueHp;
   const oppHp = isRed ? match.blueHp : match.redHp;
 
-  while (!myStayed) {
+  if (myStayed) return;
+
+  {
     let state = await getGameState(gameId);
     state = await updateGameState(gameId, {
       playerStatus: {
