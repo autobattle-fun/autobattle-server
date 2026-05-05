@@ -687,6 +687,10 @@ export async function buildTradeTransaction(req, res) {
 export const fireEventMethods = {
   fireMatchCreated: async (req, res) => {
     try {
+      const { getCelebrityByName } = await import("../services/celebrity.service.js");
+      const trump = await getCelebrityByName("Donald Trump");
+      const biden = await getCelebrityByName("Joe Biden");
+
       broadcast(
         "match:created",
         {
@@ -704,6 +708,7 @@ export const fireEventMethods = {
               name: "Donald Trump",
               llm: "llama-3",
               cards: [],
+              image: trump?.image || "https://abc.deforge.io/trump.jpg",
             },
             blue: {
               hp: 10,
@@ -711,6 +716,7 @@ export const fireEventMethods = {
               name: "Joe Biden",
               llm: "mixtral",
               cards: [],
+              image: biden?.image || "https://abc.deforge.io/biden.jpg",
             },
           },
 

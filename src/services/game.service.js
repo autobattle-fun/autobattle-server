@@ -38,27 +38,7 @@ import {
 } from "../utils/solana.helpers.js";
 import { redis } from "../db/redis.js";
 
-const CELEBRITY_NAMES = [
-  "Donald Trump",
-  "Joe Biden",
-  "Anatoly Yakovenko",
-  "Raj Gokal",
-  "Vitalik Buterin",
-  "Satoshi Nakamoto",
-  "Elon Musk",
-  "Mark Zuckerberg",
-  "Sam Bankman-Fried",
-  "Changpeng Zhao",
-  "Mert Mumtaz",
-  "Armani Ferrante",
-  "Brian Armstrong",
-  "Michael Saylor",
-  "Cathie Wood",
-  "Arthur Hayes",
-  "Justin Sun",
-  "Charles Hoskinson",
-  "Do Kwon",
-];
+import { getCelebrities } from "./celebrity.service.js";
 
 // ── Match Lifecycle ─────────────────────────────────────────────────
 
@@ -72,9 +52,15 @@ export async function startMatch() {
   const [marketPda] = deriveMarketPda(gameId, 0);
   const [vaultPda] = deriveVaultPda(gameId, 0);
 
-  const shuffledNames = [...CELEBRITY_NAMES].sort(() => 0.5 - Math.random());
-  const redName = shuffledNames[0];
-  const blueName = shuffledNames[1];
+  const allCelebrities = await getCelebrities();
+  const shuffledCelebs = [...allCelebrities].sort(() => 0.5 - Math.random());
+  const redCeleb = shuffledCelebs[0];
+  const blueCeleb = shuffledCelebs[1];
+  
+  const redName = redCeleb.name;
+  const blueName = blueCeleb.name;
+  const redImage = redCeleb.image;
+  const blueImage = blueCeleb.image;
 
   logger.info("Starting match", {
     gameId,
@@ -176,8 +162,8 @@ export async function startMatch() {
       playerStatus: { red: "WAITING", blue: "WAITING" },
       phase: "AwaitingInitialDeal",
       roundNumber: 1,
-      red: { hp: 10, score: 0, name: redName, llm: redModel, cards: [] },
-      blue: { hp: 10, score: 0, name: blueName, llm: blueModel, cards: [] },
+      red: { hp: 10, score: 0, name: redName, llm: redModel, cards: [], image: redImage },
+      blue: { hp: 10, score: 0, name: blueName, llm: blueModel, cards: [], image: blueImage },
     },
   }, gameId);
   wsEvents.breakPreparing({
@@ -662,7 +648,7 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
       const newScore = isRed ? updated.p1Score : updated.p2Score;
       const newAces = isRed ? updated.p1Aces : updated.p2Aces;
       const rawCardValue = isRed ? updated.p1LastCard : updated.p2LastCard;
-      
+
       let card;
       if (rawCardValue) {
         let label = String(rawCardValue);
@@ -670,7 +656,7 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
         else if (rawCardValue === 11) label = "J";
         else if (rawCardValue === 12) label = "Q";
         else if (rawCardValue === 13) label = "K";
-        
+
         const inferred = inferCard(myScore, newScore, myAces, newAces);
         card = { value: inferred.value, label };
       } else {

@@ -221,3 +221,12 @@ enum ResolutionMethod {
   ON_CHAIN // Resolved strictly by smart contract math (HP = 0)
   AI_AGENT // Resolved by AI agent interpreting round results
 }
+
+model Celebrity {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  image     String
+  prompt    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
