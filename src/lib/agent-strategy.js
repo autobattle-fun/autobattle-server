@@ -23,6 +23,7 @@ export async function decideAction({
   chatId,
   model,
   player,
+  name,
   myScore,
   opponentScore,
   myHp,
@@ -57,7 +58,7 @@ export async function decideAction({
       cardHistory,
     });
 
-    const result = await callLlmAgent({ chatId, model, query });
+    const result = await callLlmAgent({ chatId, model, query, name });
     return { action: result.action, reason: result.reason };
   } catch (error) {
     logger.error("LLM agent call failed, using fallback strategy", {

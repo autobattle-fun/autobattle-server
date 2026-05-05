@@ -49,6 +49,15 @@ const CELEBRITY_NAMES = [
   "Mark Zuckerberg",
   "Sam Bankman-Fried",
   "Changpeng Zhao",
+  "Mert Mumtaz",
+  "Armani Ferrante",
+  "Brian Armstrong",
+  "Michael Saylor",
+  "Cathie Wood",
+  "Arthur Hayes",
+  "Justin Sun",
+  "Charles Hoskinson",
+  "Do Kwon",
 ];
 
 // ── Match Lifecycle ─────────────────────────────────────────────────
@@ -612,6 +621,7 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
       chatId: match.matchUuid,
       model,
       player,
+      name: isRed ? match.redName : match.blueName,
       myScore,
       opponentScore: oppScore,
       myHp,
