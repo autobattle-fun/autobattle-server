@@ -12,26 +12,6 @@ import {
 } from "../services/solana.service.js";
 import { prisma } from "../db/prisma.js";
 import { env } from "../config/env.js";
-import bs58 from "bs58";
-
-async function getOpenfortFeePayer() {
-  const res = await fetch("https://api.openfort.io/rpc/solana/devnet", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${env.OPENFORT_PROJECT_KEY}`,
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "getPayerSigner",
-      params: [],
-    }),
-  });
-  const data = await res.json();
-  if (data.error) throw new Error("Failed to fetch Openfort Fee Payer");
-  return data.result.signer_address;
-}
 
 export async function getMyMarketSharesController(req, res) {
   const { marketId } = req.params;
@@ -195,29 +175,35 @@ export async function verifyTradeController(req, res) {
         ? onChainPosition.yesShares.toNumber() / 1_000_000
         : onChainPosition.noShares.toNumber() / 1_000_000;
 
-    // 3. Sync Database
-    const syncedPrediction = await prisma.prediction.upsert({
-      where: {
-        userMarketSide: {
+    // 3. Sync Database & Update User Stats
+    const [syncedPrediction] = await prisma.$transaction([
+      prisma.prediction.upsert({
+        where: {
+          userMarketSide: {
+            userId: userRecord.id,
+            marketId: market.id,
+            side: side.toUpperCase(),
+          },
+        },
+        update: {
+          shareAmount: exactShares,
+          amount: { increment: amountTokens },
+        },
+        create: {
           userId: userRecord.id,
           marketId: market.id,
           side: side.toUpperCase(),
+          amount: amountTokens,
+          shareAmount: exactShares,
+          positionPda: positionPda.toBase58(),
+          hasClaimed: false,
         },
-      },
-      update: {
-        shareAmount: exactShares,
-        amount: { increment: amountTokens },
-      },
-      create: {
-        userId: userRecord.id,
-        marketId: market.id,
-        side: side.toUpperCase(),
-        amount: amountTokens,
-        shareAmount: exactShares,
-        positionPda: positionPda.toBase58(),
-        hasClaimed: false,
-      },
-    });
+      }),
+      prisma.user.update({
+        where: { id: userRecord.id },
+        data: { totalPredictions: { increment: 1 } },
+      }),
+    ]);
 
     return res.status(200).json({ success: true, data: syncedPrediction });
   } catch (error) {
@@ -442,7 +428,6 @@ export async function verifyTransferController(req, res) {
 }
 
 export async function buildClaimController(req, res) {
-  // 🔐 Security: Removed userPubkey from the request body
   const { marketId } = req.body;
   const userRecord = req.auth?.user;
 
@@ -474,7 +459,6 @@ export async function buildClaimController(req, res) {
     const marketPda = new PublicKey(market.marketPda);
     const vaultPda = new PublicKey(market.vaultPda);
 
-    // Using your global constant defined at the top of the file
     const userTokenAccount = getAssociatedTokenAddressSync(
       AUTO_MINT_ADDRESS,
       user,
@@ -502,9 +486,8 @@ export async function buildClaimController(req, res) {
       await solanaService.connection.getLatestBlockhash("confirmed");
     tx.recentBlockhash = blockhash;
 
-    // ⛽️ GASLESS FIX: Make Openfort the fee payer!
-    const feePayerAddress = await getOpenfortFeePayer();
-    tx.feePayer = new PublicKey(feePayerAddress);
+    // ⛽️ STANDARD PATTERN: User pays their own gas
+    tx.feePayer = user;
 
     const serializedTx = tx.serialize({
       requireAllSignatures: false,
@@ -514,7 +497,6 @@ export async function buildClaimController(req, res) {
     return res.status(200).json({
       success: true,
       transaction: serializedTx.toString("base64"),
-      feePayer: feePayerAddress, // Pass string back to frontend
     });
   } catch (error) {
     console.error("Build claim error:", error);
@@ -528,76 +510,31 @@ export async function buildClaimController(req, res) {
 }
 
 export async function verifyClaimController(req, res) {
-  // 🔐 Now expecting partiallySignedBase64 and feePayer instead of a final signature
-  const { partiallySignedBase64, feePayer, marketId } = req.body;
+  const { signature, marketId } = req.body;
   const userRecord = req.auth?.user;
 
-  if (!userRecord || !userRecord.walletAddress) {
+  if (!userRecord || !userRecord.id) {
     return res.status(401).json({ success: false, error: "Unauthorized." });
   }
 
-  if (!partiallySignedBase64 || !feePayer || !marketId) {
-    return res
-      .status(400)
-      .json({ success: false, error: "Missing required fields." });
+  if (!signature || !marketId) {
+    return res.status(400).json({
+      success: false,
+      error: "Missing required fields (signature, marketId).",
+    });
   }
 
   try {
-    // Confirm using blockhash strategy
+    // 1. Confirm the transaction the user broadcasted
     const { blockhash, lastValidBlockHeight } =
       await solanaService.connection.getLatestBlockhash("confirmed");
-
-    // 1. Send to Openfort Paymaster for execution
-    const paymasterRes = await fetch(
-      "https://api.openfort.io/rpc/solana/devnet",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${env.OPENFORT_PROJECT_KEY}`,
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "signAndSendTransaction",
-          // 🚨 Includes your exact policy config
-          params: {
-            transaction: partiallySignedBase64,
-            signer_key: feePayer,
-            policy: env.OPENFORT_POLICY_ID,
-          },
-        }),
-      },
-    );
-    const paymasterData = await paymasterRes.json();
-
-    if (paymasterData.error) {
-      console.error("Openfort Paymaster Error:", paymasterData.error);
-      return res
-        .status(400)
-        .json({ success: false, error: "Paymaster failed." });
-    }
-
-    const signedTransaction = paymasterData.result?.signed_transaction;
-    if (!signedTransaction) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Invalid paymaster response." });
-    }
-
-    // Openfort already broadcast it — just extract the signature
-    const txBuffer = Buffer.from(signedTransaction, "base64");
-    const decodedTx = Transaction.from(txBuffer);
-    const signature = bs58.encode(decodedTx.signatures[0].signature);
-
-    console.log(`[BLOCKCHAIN] Tx broadcasted by Openfort: ${signature}`);
 
     await solanaService.connection.confirmTransaction(
       { signature, blockhash, lastValidBlockHeight },
       "confirmed",
     );
 
-    // 3. Security verification
+    // 2. Security verification
     const txInfo = await solanaService.connection.getParsedTransaction(
       signature,
       { maxSupportedTransactionVersion: 0, commitment: "confirmed" },
@@ -619,26 +556,52 @@ export async function verifyClaimController(req, res) {
       });
     }
 
-    // 4. Update the database securely using the authenticated user ID
-    const updatedPrediction = await prisma.prediction.updateMany({
+    // 3. Fetch the pending predictions to calculate earnings
+    const pendingPredictions = await prisma.prediction.findMany({
       where: {
         marketId: marketId,
-        userId: userRecord.id, // 🔐 Replaced wallet lookup with exact user ID
+        userId: userRecord.id,
         hasClaimed: false,
       },
-      data: { hasClaimed: true },
     });
 
-    if (updatedPrediction.count === 0)
+    if (pendingPredictions.length === 0) {
       return res.status(404).json({
         success: false,
         message:
           "No pending prediction found to update. It might already be marked as claimed.",
       });
+    }
+
+    // Calculate total earned: 1 winning share = 1 payout token
+    const tokensEarned = pendingPredictions.reduce(
+      (sum, p) => sum + Number(p.shareAmount),
+      0,
+    );
+
+    // 4. Update the database securely using a Transaction
+    await prisma.$transaction([
+      // Mark predictions as claimed
+      prisma.prediction.updateMany({
+        where: {
+          marketId: marketId,
+          userId: userRecord.id,
+          hasClaimed: false,
+        },
+        data: { hasClaimed: true },
+      }),
+      prisma.user.update({
+        where: { id: userRecord.id },
+        data: {
+          totalWins: { increment: 1 },
+          totalEarnings: { increment: tokensEarned },
+        },
+      }),
+    ]);
 
     return res.status(200).json({
       success: true,
-      message: "Claim successfully sponsored, verified, and database updated.",
+      message: `Claim successfully verified! Won ${tokensEarned} tokens.`,
     });
   } catch (error) {
     console.error("Verify claim error:", error);

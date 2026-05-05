@@ -81,11 +81,11 @@ export async function predictionDetailController(request, response) {
   });
 }
 
-export async function getUserById(request, response) {
-  const { userId } = request.params;
+export async function getUserProfile(request, response) {
+  const { username } = request.params;
   const user = await prisma.user.findUnique({
     where: {
-      id: userId,
+      username: username,
     },
   });
 
@@ -96,9 +96,35 @@ export async function getUserById(request, response) {
     });
   }
 
+  const tokenMintAddress = process.env.AUTO_TOKEN_ADDRESS;
+
+  const walletPublicKey = new PublicKey(user.walletAddress);
+  const mintPublicKey = new PublicKey(tokenMintAddress);
+
+  const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
+    walletPublicKey,
+    {
+      mint: mintPublicKey,
+    },
+  );
+
+  const lamports = await connection.getBalance(walletPublicKey);
+  const solBalance = lamports / LAMPORTS_PER_SOL;
+
+  let splTokenBalance = 0;
+
+  if (tokenAccounts.value.length > 0) {
+    splTokenBalance =
+      tokenAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount;
+  }
+
   return response.json({
     success: true,
     data: user,
+    metadata: {
+      splTokenBalance,
+      solBalance,
+    },
   });
 }
 

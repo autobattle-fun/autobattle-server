@@ -5,12 +5,14 @@ import {
   recordPrediction,
   listPredictionsForMarket,
   listAllMarkets,
+  listAllMatches,
 } from "../services/market.service.js";
 import {
   validate,
   recordPredictionSchema,
   listPredictionsSchema,
   listMarketsSchema,
+  listMatchesSchema,
 } from "../utils/validators.js";
 import { prisma } from "../db/prisma.js";
 
@@ -123,16 +125,25 @@ export async function getRoundMarketController(request, response) {
   const roundNumber = Number(request.params.roundNumber);
 
   if (isNaN(gameId) || isNaN(roundNumber)) {
-    return response.status(400).json({ success: false, error: "Invalid parameters" });
+    return response
+      .status(400)
+      .json({ success: false, error: "Invalid parameters" });
   }
 
   try {
     const market = await prisma.market.findFirst({
-      where: { match: { gameId: gameId }, marketType: "MID_GAME", targetRound: roundNumber },
+      where: {
+        match: { gameId: gameId },
+        marketType: "MID_GAME",
+        targetRound: roundNumber,
+      },
     });
 
     if (!market) {
-      return response.status(404).json({ success: false, message: `No market found for Match #${gameId}, Round ${roundNumber}` });
+      return response.status(404).json({
+        success: false,
+        message: `No market found for Match #${gameId}, Round ${roundNumber}`,
+      });
     }
 
     return response.status(200).json({

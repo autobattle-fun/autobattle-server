@@ -107,12 +107,14 @@ async function handlePing(socket, message) {
     // Check for active or paused match
     let activeMatch = null;
     const cachedMatch = await redis.get("autobattle:ws:active_match");
-    
+
     if (cachedMatch) {
       activeMatch = JSON.parse(cachedMatch);
     } else {
       activeMatch = await prisma.match.findFirst({
-        where: { status: { in: ["ACTIVE", "PAUSED", "PENDING", "MATCHMAKING"] } },
+        where: {
+          status: { in: ["ACTIVE", "PAUSED", "PENDING", "MATCHMAKING"] },
+        },
         orderBy: { createdAt: "desc" },
         select: {
           id: true,
@@ -133,9 +135,17 @@ async function handlePing(socket, message) {
       });
 
       if (activeMatch) {
-        await redis.setex("autobattle:ws:active_match", 2, JSON.stringify(activeMatch));
+        await redis.setex(
+          "autobattle:ws:active_match",
+          2,
+          JSON.stringify(activeMatch),
+        );
       } else {
-        await redis.setex("autobattle:ws:active_match", 2, JSON.stringify(null));
+        await redis.setex(
+          "autobattle:ws:active_match",
+          2,
+          JSON.stringify(null),
+        );
       }
     }
 
@@ -217,7 +227,7 @@ async function handlePing(socket, message) {
   // Test pong data
   // socket.emit("pong", {
   //   latency,
-  //       gameState: {
+  //   gameState: {
   //     gameId: 999,
   //     gameStatus: "ACTIVE",
   //     serverStatus: "ACTIVE",
@@ -248,8 +258,8 @@ async function handlePing(socket, message) {
   //   },
   //   market: {
   //     mainMarket: {
-  //       id: "cmorr18i90001rv8ooo76x7ax",
-  //       matchId: "cmorr18i90001rv8ooo76x7ax",
+  //       id: "cmot8795k0001ti8o4pxh8dp7",
+  //       matchId: "cmot8795k0001ti8o4pxh8dp7",
   //       marketIndex: 0,
   //       targetRound: null,
   //       status: "OPEN",
@@ -259,8 +269,8 @@ async function handlePing(socket, message) {
   //       totalVolumeRaw: 0,
   //     },
   //     roundMarket: {
-  //       id: "cmorr18pw0002rv8obnhsxg4x",
-  //       matchId: "cmorr18pw0002rv8obnhsxg4x",
+  //       id: "cmot879e60002ti8ohs647mrv",
+  //       matchId: "cmot879e60002ti8ohs647mrv",
   //       marketIndex: 1,
   //       targetRound: 1,
   //       status: "OPEN",
@@ -288,7 +298,7 @@ async function handlePing(socket, message) {
   //     },
   //   ],
   //   countdown: 228,
-  // })
+  // });
 }
 
 // ── Event Broadcasting ──────────────────────────────────────────────
@@ -331,7 +341,7 @@ export function broadcast(eventType, payload, matchId) {
   logger.info("WebSocket broadcast", { eventType, matchId });
 
   // Forward to Telegram (fire-and-forget, never block the broadcast)
-  notifyEvent(eventType, payload, matchId).catch(() => { });
+  notifyEvent(eventType, payload, matchId).catch(() => {});
 }
 
 /**

@@ -82,6 +82,12 @@ export async function listAllMarkets({ page = 1, limit = 10, status } = {}) {
             id: true,
             gameId: true,
             status: true,
+            redName: true,
+            blueName: true,
+            redHp: true,
+            blueHp: true,
+            winner: true,
+            roundNumber: true,
           },
         },
       },
@@ -94,6 +100,51 @@ export async function listAllMarkets({ page = 1, limit = 10, status } = {}) {
 
   return {
     markets,
+    pagination: {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+}
+
+export async function listAllMatches({ page = 1, limit = 10, status } = {}) {
+  const skip = (page - 1) * limit;
+  const where = {};
+  if (status) {
+    where.status = status;
+  }
+
+  const [matches, total] = await Promise.all([
+    prisma.match.findMany({
+      where,
+      select: {
+        id: true,
+        gameId: true,
+        status: true,
+        redName: true,
+        blueName: true,
+        redHp: true,
+        blueHp: true,
+        winner: true,
+        roundNumber: true,
+        createdAt: true,
+        _count: {
+          select: {
+            markets: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      skip,
+      take: limit,
+    }),
+    prisma.match.count({ where }),
+  ]);
+
+  return {
+    matches,
     pagination: {
       total,
       page,

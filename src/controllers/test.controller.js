@@ -50,7 +50,7 @@ export async function createMarket(req, res) {
         .json({ error: "Registry not initialized on-chain." });
     }
 
-    // 2. Derive all required PDAs for MAIN Market (Index 0)
+    // 2. Derive all required PDAs
     const [gamePda] = PublicKey.findProgramAddressSync(
       [Buffer.from("game"), gameIdBuf(nextGameId)],
       GAME_ENGINE_PROGRAM_ID,
@@ -64,7 +64,6 @@ export async function createMarket(req, res) {
       PRED_MARKET_PROGRAM_ID,
     );
 
-    // Derive PDAs for ROUND 1 Market (Index 1)
     const [round1MarketPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("market"), gameIdBuf(nextGameId), u8Buf(1)],
       PRED_MARKET_PROGRAM_ID,
@@ -81,8 +80,16 @@ export async function createMarket(req, res) {
     const agentRed = solanaService.agentRedKeypair.publicKey;
     const agentBlue = solanaService.agentBlueKeypair.publicKey;
 
-    // 3. Execute Blockchain Transactions
-    // Init Game
+    const AUTO_MINT_ADDRESS = new PublicKey(
+      process.env.AUTO_TOKEN_ADDRESS || crank,
+    );
+    const creatorTokenAccount = getAssociatedTokenAddressSync(
+      AUTO_MINT_ADDRESS,
+      crank,
+    );
+    const closesAtUnix = Math.floor(Date.now() / 1000) + 3153600000; // 100 years
+
+    // 3. SLOW BLOCKCHAIN TRANSACTIONS (Outside of DB Transaction to prevent timeouts)
     await solanaService.gameEngine.methods
       .initGame(agentRed, agentBlue)
       .accounts({
@@ -93,19 +100,10 @@ export async function createMarket(req, res) {
       })
       .rpc();
 
-    // Set expiry 100 years in the future (Permanent Polymarket Mode)
-    const closesAtUnix = Math.floor(Date.now() / 1000) + 3153600000;
-
-    const creatorTokenAccount = getAssociatedTokenAddressSync(
-      AUTO_MINT_ADDRESS,
-      crank,
-    );
-
-    // Create MAIN Market (Index 0)
     await solanaService.predMarket.methods
       .createMarket(
         new BN(nextGameId),
-        0, // marketIndex
+        0,
         `Will Red Win Match #${nextGameId}?`,
         new BN(closesAtUnix),
       )
@@ -121,11 +119,10 @@ export async function createMarket(req, res) {
       })
       .rpc();
 
-    // Create ROUND 1 Market (Index 1)
     await solanaService.predMarket.methods
       .createMarket(
         new BN(nextGameId),
-        1, // marketIndex
+        1,
         `Will Red Win Round 1 of Match #${nextGameId}?`,
         new BN(closesAtUnix),
       )
@@ -145,56 +142,61 @@ export async function createMarket(req, res) {
       `[DATABASE] Saving Match #${nextGameId} and Markets to Prisma...`,
     );
 
-    // 4. Save to Database
-    const matchRecord = await prisma.$transaction(async (tx) => {
-      const match = await tx.match.create({
-        data: {
-          gameId: nextGameId,
-          gamePda: gamePda.toBase58(),
-          agentRed: agentRed.toBase58(),
-          agentBlue: agentBlue.toBase58(),
-          status: "PENDING",
-          matchUuid: randomUUID(),
-          llmRed: "meta-llama/llama-3-8b-instruct",
-          llmBlue: "mistralai/mixtral-8x7b-instruct",
-        },
-      });
+    // 4. FAST DATABASE INSERTS
+    const matchRecord = await prisma.$transaction(
+      async (tx) => {
+        const match = await tx.match.create({
+          data: {
+            gameId: nextGameId,
+            gamePda: gamePda.toBase58(),
+            agentRed: agentRed.toBase58(),
+            agentBlue: agentBlue.toBase58(),
+            status: "MATCHMAKING",
+            matchUuid: randomUUID(),
+            llmRed: "meta-llama/llama-3-8b-instruct",
+            llmBlue: "mistralai/mixtral-8x7b-instruct",
+          },
+        });
 
-      // Insert MAIN Market
-      const mainMarket = await tx.market.create({
-        data: {
-          slug: `match-${nextGameId}-main`,
-          title: `Match #${nextGameId}: Red vs Blue`,
-          description: "Main prediction market for the overall match winner.",
-          matchId: match.id,
-          marketPda: mainMarketPda.toBase58(),
-          vaultPda: mainVaultPda.toBase58(),
-          marketIndex: 0,
-          marketType: "MAIN",
-          status: "OPEN",
-          closesAt: new Date(closesAtUnix * 1000),
-        },
-      });
+        const mainMarket = await tx.market.create({
+          data: {
+            slug: `match-${nextGameId}-main`,
+            title: `Match #${nextGameId}: Red vs Blue`,
+            description: "Main prediction market for the overall match winner.",
+            matchId: match.id,
+            marketPda: mainMarketPda.toBase58(),
+            vaultPda: mainVaultPda.toBase58(),
+            marketIndex: 0,
+            marketType: "MAIN",
+            status: "OPEN",
+            closesAt: new Date(closesAtUnix * 1000),
+          },
+        });
 
-      // Insert ROUND 1 Market
-      const round1Market = await tx.market.create({
-        data: {
-          slug: `match-${nextGameId}-round-1`,
-          title: `Round 1 Winner: Red vs Blue`,
-          description: "Micro-market predicting the winner of Round 1.",
-          matchId: match.id,
-          marketPda: round1MarketPda.toBase58(),
-          vaultPda: round1VaultPda.toBase58(),
-          marketIndex: 1,
-          marketType: "MID_GAME",
-          targetRound: 1,
-          status: "OPEN",
-          closesAt: new Date(closesAtUnix * 1000),
-        },
-      });
+        const round1Market = await tx.market.create({
+          data: {
+            slug: `match-${nextGameId}-round-1`,
+            title: `Round 1 Winner: Red vs Blue`,
+            description: "Micro-market predicting the winner of Round 1.",
+            matchId: match.id,
+            marketPda: round1MarketPda.toBase58(),
+            vaultPda: round1VaultPda.toBase58(),
+            marketIndex: 1,
+            marketType: "MID_GAME",
+            targetRound: 1,
+            status: "OPEN",
+            closesAt: new Date(closesAtUnix * 1000),
+          },
+        });
 
-      return { match, mainMarket, round1Market };
-    });
+        return { match, mainMarket, round1Market };
+      },
+      {
+        // Extra safety padding so Prisma never crashes on a slow insert
+        maxWait: 5000,
+        timeout: 15000,
+      },
+    );
 
     return res.status(200).json({
       success: true,
@@ -687,7 +689,8 @@ export async function buildTradeTransaction(req, res) {
 export const fireEventMethods = {
   fireMatchCreated: async (req, res) => {
     try {
-      const { getCelebrityByName } = await import("../services/celebrity.service.js");
+      const { getCelebrityByName } =
+        await import("../services/celebrity.service.js");
       const trump = await getCelebrityByName("Donald Trump");
       const biden = await getCelebrityByName("Joe Biden");
 
