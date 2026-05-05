@@ -82,7 +82,10 @@ export async function getUserHistory(userId, page = 1, limit = 10) {
       return JSON.parse(cached);
     }
   } catch (err) {
-    logger.warn("Redis history cache read error", { userId, error: err.message });
+    logger.warn("Redis history cache read error", {
+      userId,
+      error: err.message,
+    });
   }
 
   const [predictions, total] = await Promise.all([
@@ -90,14 +93,29 @@ export async function getUserHistory(userId, page = 1, limit = 10) {
       where: { userId },
       select: {
         id: true,
+        userId: true,
         side: true,
         amount: true,
         shareAmount: true,
         hasClaimed: true,
         createdAt: true,
+        // Wrap market fields in a nested select
         market: {
           select: {
-            title: true,
+            id: true,
+            marketIndex: true,
+            marketType: true,
+            status: true,
+            winningOutcome: true,
+            targetRound: true,
+            // Wrap match fields in another nested select
+            match: {
+              select: {
+                gameId: true,
+                redName: true,
+                blueName: true,
+              },
+            },
           },
         },
       },
@@ -122,7 +140,10 @@ export async function getUserHistory(userId, page = 1, limit = 10) {
     // Cache for 5 minutes
     await redis.setex(cacheKey, 300, JSON.stringify(result));
   } catch (err) {
-    logger.warn("Redis history cache write error", { userId, error: err.message });
+    logger.warn("Redis history cache write error", {
+      userId,
+      error: err.message,
+    });
   }
 
   return result;
@@ -137,31 +158,37 @@ export async function getPredictionDetail(predictionId) {
       return JSON.parse(cached);
     }
   } catch (err) {
-    logger.warn("Redis prediction cache read error", { predictionId, error: err.message });
+    logger.warn("Redis prediction cache read error", {
+      predictionId,
+      error: err.message,
+    });
   }
 
   const prediction = await prisma.prediction.findUnique({
     where: { id: predictionId },
-    include: {
-      user: {
+    select: {
+      id: true,
+      userId: true,
+      side: true,
+      amount: true,
+      shareAmount: true,
+      hasClaimed: true,
+      createdAt: true,
+      // Wrap market fields in a nested select
+      market: {
         select: {
           id: true,
-          username: true,
-          walletAddress: true,
-        },
-      },
-      market: {
-        include: {
+          marketIndex: true,
+          marketType: true,
+          status: true,
+          winningOutcome: true,
+          targetRound: true,
+          // Wrap match fields in another nested select
           match: {
-            include: {
-              rounds: {
-                include: {
-                  moves: {
-                    orderBy: { moveNumber: "asc" },
-                  },
-                },
-                orderBy: { roundNumber: "asc" },
-              },
+            select: {
+              gameId: true,
+              redName: true,
+              blueName: true,
             },
           },
         },
@@ -174,7 +201,10 @@ export async function getPredictionDetail(predictionId) {
       // Cache for 10 minutes (details change less frequently once resolved)
       await redis.setex(cacheKey, 600, JSON.stringify(prediction));
     } catch (err) {
-      logger.warn("Redis prediction cache write error", { predictionId, error: err.message });
+      logger.warn("Redis prediction cache write error", {
+        predictionId,
+        error: err.message,
+      });
     }
   }
 
