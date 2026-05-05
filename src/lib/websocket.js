@@ -8,6 +8,7 @@ import {
   getRoundSystemLogs,
 } from "./system-log-state-store.js";
 import { notifyEvent } from "./telegram.js";
+import { redis } from "../db/redis.js";
 
 // ── WebSocket Manager ───────────────────────────────────────────────
 //
@@ -104,26 +105,39 @@ async function handlePing(socket, message) {
 
   try {
     // Check for active or paused match
-    const activeMatch = await prisma.match.findFirst({
-      where: { status: { in: ["ACTIVE", "PAUSED", "PENDING", "MATCHMAKING"] } },
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        gameId: true,
-        matchUuid: true,
-        status: true,
-        roundNumber: true,
-        redHp: true,
-        blueHp: true,
-        redName: true,
-        blueName: true,
-        llmRed: true,
-        llmBlue: true,
-        agentRed: true,
-        agentBlue: true,
-        createdAt: true,
-      },
-    });
+    let activeMatch = null;
+    const cachedMatch = await redis.get("autobattle:ws:active_match");
+    
+    if (cachedMatch) {
+      activeMatch = JSON.parse(cachedMatch);
+    } else {
+      activeMatch = await prisma.match.findFirst({
+        where: { status: { in: ["ACTIVE", "PAUSED", "PENDING", "MATCHMAKING"] } },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          gameId: true,
+          matchUuid: true,
+          status: true,
+          roundNumber: true,
+          redHp: true,
+          blueHp: true,
+          redName: true,
+          blueName: true,
+          llmRed: true,
+          llmBlue: true,
+          agentRed: true,
+          agentBlue: true,
+          createdAt: true,
+        },
+      });
+
+      if (activeMatch) {
+        await redis.setex("autobattle:ws:active_match", 2, JSON.stringify(activeMatch));
+      } else {
+        await redis.setex("autobattle:ws:active_match", 2, JSON.stringify(null));
+      }
+    }
 
     if (activeMatch) {
       // Get detailed game state from Redis

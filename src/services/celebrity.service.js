@@ -1,7 +1,7 @@
 import { prisma } from "../db/prisma.js";
 import { redis } from "../db/redis.js";
 
-const CACHE_KEY = "celebrities:all";
+const CACHE_KEY = "autobattle:celebrities";
 const CACHE_TTL_SECONDS = 4 * 60 * 60; // 4 hours
 
 /**
@@ -15,7 +15,7 @@ export async function getCelebrities() {
   }
 
   const celebrities = await prisma.celebrity.findMany();
-  
+
   if (celebrities.length > 0) {
     await redis.setex(CACHE_KEY, CACHE_TTL_SECONDS, JSON.stringify(celebrities));
   }
