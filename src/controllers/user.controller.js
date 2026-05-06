@@ -5,6 +5,8 @@ import {
 } from "../services/user.service.js";
 import { validate, listPredictionsSchema } from "../utils/validators.js";
 import { prisma } from "../db/prisma.js";
+import { redis } from "../db/redis.js";
+import { logger } from "../lib/logger.js";
 
 const connection = new Connection(process.env.SOLANA_RPC_URL, "confirmed");
 
@@ -172,4 +174,41 @@ export async function createUser(request, response) {
     success: true,
     data: newUser,
   });
+}
+
+/**
+ * GET /user/search/:username
+ * Search for a user by their username.
+ */
+export async function searchByUsernameController(request, response) {
+  const { username } = request.params;
+  const cacheKey = `user:search:${username}`;
+
+  try {
+    const cached = await redis.get(cacheKey);
+    if (cached) return response.json(JSON.parse(cached));
+  } catch (err) {
+    logger.warn("Redis user search cache read error", { username, error: err.message });
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { username },
+  });
+
+  if (!user) {
+    return response.status(404).json({ success: false, error: "User not found." });
+  }
+
+  const result = {
+    success: true,
+    data: user,
+  };
+
+  try {
+    await redis.setex(cacheKey, 60, JSON.stringify(result));
+  } catch (err) {
+    logger.warn("Redis user search cache write error", { username, error: err.message });
+  }
+
+  return response.json(result);
 }

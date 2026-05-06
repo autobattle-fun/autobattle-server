@@ -6,6 +6,7 @@ import {
   getUserProfile,
   createUser,
   getUserById,
+  searchByUsernameController,
 } from "../controllers/user.controller.js";
 import {
   requireAuth,
@@ -18,6 +19,7 @@ export const userRoutes = Router();
 userRoutes.get("/get/:id", asyncHandler(getUserById));
 userRoutes.get("/me", requireAuth, asyncHandler(meController));
 userRoutes.get("/profile/:username", asyncHandler(getUserProfile));
+userRoutes.get("/search/:username", asyncHandler(searchByUsernameController));
 userRoutes.post("/create", requireOptionalAuth, asyncHandler(createUser));
 
 userRoutes.get("/predictions/:username", asyncHandler(historyController));

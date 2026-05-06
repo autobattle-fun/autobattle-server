@@ -9,6 +9,7 @@ import {
   resumeMatchController,
   countdownController,
   getGameStatsController,
+  searchByGameIdController,
 } from "../controllers/game.controller.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { requireAdminKey } from "../middlewares/admin-auth.js";
@@ -19,6 +20,7 @@ export const gameRoutes = Router();
 gameRoutes.get("/", asyncHandler(listMatchesController));
 gameRoutes.get("/active", asyncHandler(activeMatchController));
 gameRoutes.get("/countdown", asyncHandler(countdownController));
+gameRoutes.get("/search/:gameId", asyncHandler(searchByGameIdController));
 gameRoutes.get("/:gameId/stats", asyncHandler(getGameStatsController));
 gameRoutes.get("/:matchId", asyncHandler(getMatchController));
 
@@ -27,5 +29,13 @@ gameRoutes.post("/start", asyncHandler(startMatchController));
 gameRoutes.post("/:matchId/advance", asyncHandler(advanceMatchController));
 
 // Admin-secured endpoints (require x-admin-key header)
-gameRoutes.post("/:matchId/pause", requireAdminKey, asyncHandler(pauseMatchController));
-gameRoutes.post("/:matchId/resume", requireAdminKey, asyncHandler(resumeMatchController));
+gameRoutes.post(
+  "/:matchId/pause",
+  requireAdminKey,
+  asyncHandler(pauseMatchController),
+);
+gameRoutes.post(
+  "/:matchId/resume",
+  requireAdminKey,
+  asyncHandler(resumeMatchController),
+);
