@@ -10,6 +10,7 @@ import {
   countdownController,
   getGameStatsController,
   searchByGameIdController,
+  getMatchDetailsByGameIdController,
 } from "../controllers/game.controller.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { requireAdminKey } from "../middlewares/admin-auth.js";
@@ -21,6 +22,7 @@ gameRoutes.get("/", asyncHandler(listMatchesController));
 gameRoutes.get("/active", asyncHandler(activeMatchController));
 gameRoutes.get("/countdown", asyncHandler(countdownController));
 gameRoutes.get("/search/:gameId", asyncHandler(searchByGameIdController));
+gameRoutes.get("/:gameId/details", asyncHandler(getMatchDetailsByGameIdController));
 gameRoutes.get("/:gameId/stats", asyncHandler(getGameStatsController));
 gameRoutes.get("/:matchId", asyncHandler(getMatchController));
 

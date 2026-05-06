@@ -18,13 +18,19 @@ export async function postComment(req, res) {
 
 export async function getMarketComments(req, res) {
   const { marketId } = req.params;
+  const { page, limit } = req.query;
   const userId = req.auth?.user?.id;
 
   if (!marketId) {
     return res.status(400).json({ error: "marketId is required" });
   }
 
-  const comments = await CommentService.getCommentsByMarket(marketId, userId);
+  const comments = await CommentService.getCommentsByMarket(
+    marketId,
+    userId,
+    parseInt(page) || 1,
+    parseInt(limit) || 20,
+  );
   res.json(comments);
 }
 

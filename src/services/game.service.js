@@ -1173,17 +1173,68 @@ export async function getActiveMatch() {
 }
 
 /**
- * Find a match by its on-chain gameId.
- * Caches the mapping from gameId to match state.
+ * Search for matches by name (red or blue) or on-chain gameId.
  */
-export async function getMatchByGameId(gameId) {
-  const cacheKey = `game:search:id:${gameId}`;
+export async function searchMatches(query) {
+  const cacheKey = `game:search:query:${query.toLowerCase()}`;
 
   try {
     const cached = await redis.get(cacheKey);
     if (cached) return JSON.parse(cached);
   } catch (err) {
     logger.warn("Redis game search cache read error", {
+      query,
+      error: err.message,
+    });
+  }
+
+  const gameId = parseInt(query);
+  const where = {
+    OR: [
+      { redName: { contains: query, mode: "insensitive" } },
+      { blueName: { contains: query, mode: "insensitive" } },
+    ],
+  };
+
+  if (!isNaN(gameId)) {
+    where.OR.push({ gameId: gameId });
+  }
+
+  const matches = await prisma.match.findMany({
+    where,
+    include: {
+      markets: {
+        where: { marketType: "MAIN" },
+        select: { id: true, slug: true, status: true, title: true },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 10,
+  });
+
+  try {
+    await redis.setex(cacheKey, 60, JSON.stringify(matches));
+  } catch (err) {
+    logger.warn("Redis game search cache write error", {
+      query,
+      error: err.message,
+    });
+  }
+
+  return matches;
+}
+
+/**
+ * Find a match by its on-chain gameId and return FULL details (rounds, moves, live state).
+ */
+export async function getMatchByGameId(gameId) {
+  const cacheKey = `game:details:id:${gameId}`;
+
+  try {
+    const cached = await redis.get(cacheKey);
+    if (cached) return JSON.parse(cached);
+  } catch (err) {
+    logger.warn("Redis game details cache read error", {
       gameId,
       error: err.message,
     });
@@ -1198,10 +1249,10 @@ export async function getMatchByGameId(gameId) {
   const result = await getMatchState(match.id);
 
   try {
-    const ttl = result.match.status === "RESOLVED" ? 120 : 5;
+    const ttl = result.match.status === "RESOLVED" ? 3600 : 5;
     await redis.setex(cacheKey, ttl, JSON.stringify(result));
   } catch (err) {
-    logger.warn("Redis game search cache write error", {
+    logger.warn("Redis game details cache write error", {
       gameId,
       error: err.message,
     });

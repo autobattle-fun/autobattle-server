@@ -7,6 +7,7 @@ import {
   listMatches,
   pauseMatch,
   resumeMatch,
+  searchMatches,
   getMatchByGameId,
 } from "../services/game.service.js";
 import {
@@ -227,12 +228,27 @@ export async function getGameStatsController(request, response) {
 }
 
 /**
- * GET /games/search/:gameId
- * Search for a match by its on-chain gameId.
+ * GET /games/search/:query
+ * Search for matches by name or on-chain gameId.
  */
 export async function searchByGameIdController(request, response) {
   const { gameId } = request.params;
+  const result = await searchMatches(gameId);
+
+  return response.json({
+    success: true,
+    data: result,
+  });
+}
+
+/**
+ * GET /games/:gameId/details
+ * Get full details of a match by its on-chain gameId.
+ */
+export async function getMatchDetailsByGameIdController(request, response) {
+  const { gameId } = request.params;
   const id = parseInt(gameId);
+
   if (isNaN(id)) {
     return response
       .status(400)

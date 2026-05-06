@@ -10,33 +10,39 @@ export async function findUserByPrivyId(privyUserId) {
   return prisma.user.findUnique({ where: { privyUserId } });
 }
 
-export async function findUserByUsername(username) {
-  const cacheKey = `user:search:${username}`;
+export async function searchUsers(query) {
+  const cacheKey = `user:search:query:${query.toLowerCase()}`;
 
   try {
     const cached = await redis.get(cacheKey);
     if (cached) return JSON.parse(cached);
   } catch (err) {
     logger.warn("Redis user search cache read error", {
-      username,
+      query,
       error: err.message,
     });
   }
 
-  const user = await prisma.user.findUnique({ where: { username } });
+  const users = await prisma.user.findMany({
+    where: {
+      username: {
+        contains: query,
+        mode: "insensitive",
+      },
+    },
+    take: 10,
+  });
 
-  if (user) {
-    try {
-      await redis.setex(cacheKey, 60, JSON.stringify(user));
-    } catch (err) {
-      logger.warn("Redis user search cache write error", {
-        username,
-        error: err.message,
-      });
-    }
+  try {
+    await redis.setex(cacheKey, 60, JSON.stringify(users));
+  } catch (err) {
+    logger.warn("Redis user search cache write error", {
+      query,
+      error: err.message,
+    });
   }
 
-  return user;
+  return users;
 }
 
 export async function touchUserLastLogin(id) {

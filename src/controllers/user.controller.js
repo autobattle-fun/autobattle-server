@@ -2,7 +2,7 @@ import { Connection, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import {
   getUserHistory,
   getPredictionDetail,
-  findUserByUsername,
+  searchUsers,
 } from "../services/user.service.js";
 import { validate, listPredictionsSchema } from "../utils/validators.js";
 import { prisma } from "../db/prisma.js";
@@ -178,19 +178,15 @@ export async function createUser(request, response) {
 }
 
 /**
- * GET /user/search/:username
- * Search for a user by their username.
+ * GET /user/search/:query
+ * Search for users by their username (supports partial matching).
  */
 export async function searchByUsernameController(request, response) {
   const { username } = request.params;
-  const user = await findUserByUsername(username);
-
-  if (!user) {
-    return response.status(404).json({ success: false, error: "User not found." });
-  }
+  const users = await searchUsers(username);
 
   return response.json({
     success: true,
-    data: user,
+    data: users,
   });
 }

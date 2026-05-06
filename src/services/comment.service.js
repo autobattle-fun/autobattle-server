@@ -18,7 +18,9 @@ export class CommentService {
     });
   }
 
-  static async getCommentsByMarket(marketId, userId = null) {
+  static async getCommentsByMarket(marketId, userId = null, page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+
     const comments = await prisma.comment.findMany({
       where: { marketId },
       include: {
@@ -38,6 +40,8 @@ export class CommentService {
           : false,
       },
       orderBy: { createdAt: "desc" },
+      skip,
+      take: limit,
     });
 
     if (userId) {
