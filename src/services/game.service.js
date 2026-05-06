@@ -315,12 +315,14 @@ export async function playRound(matchId) {
     gs.p1Score,
     preRiverRedAces,
     gs.p1Aces,
+    gs.p1LastCard
   );
   const riverBlueCard = inferCard(
     preRiverBlueScore,
     gs.p2Score,
     preRiverBlueAces,
     gs.p2Aces,
+    gs.p2LastCard
   );
   await recordRiverCards(gameId, riverRedCard, riverBlueCard);
   await syncOnChainState(gameId, gs, parseGamePhase(gs.phase));
@@ -479,6 +481,11 @@ export async function playRound(matchId) {
 
   // Step 7: Persist round log to Prisma
   state = await getGameState(gameId);
+  // If gs scores are 0 but we just dealt a river card, it means the round reset.
+  // Reconstruct the actual scores for the round log.
+  const redScoreFinal = (gs.p1Score === 0 && riverRedCard.value > 0) ? preRiverRedScore + riverRedCard.value : gs.p1Score;
+  const blueScoreFinal = (gs.p2Score === 0 && riverBlueCard.value > 0) ? preRiverBlueScore + riverBlueCard.value : gs.p2Score;
+
   const roundLog = await prisma.matchRound.create({
     data: {
       matchId,
@@ -486,8 +493,8 @@ export async function playRound(matchId) {
       phase,
       redScoreInit,
       blueScoreInit,
-      redScoreFinal: gs.p1Score,
-      blueScoreFinal: gs.p2Score,
+      redScoreFinal,
+      blueScoreFinal,
       redHpBefore,
       blueHpBefore,
       redHpAfter: gs.p1Hp,
@@ -525,8 +532,8 @@ export async function playRound(matchId) {
     roundNumber: match.roundNumber,
     redCards: state?.red?.cards || [],
     blueCards: state?.blue?.cards || [],
-    redScoreFinal: gs.p1Score,
-    blueScoreFinal: gs.p2Score,
+    redScoreFinal,
+    blueScoreFinal,
     winner: roundWinner,
   });
 

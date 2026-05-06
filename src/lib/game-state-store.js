@@ -45,43 +45,44 @@ function stateKey(gameId) {
  * Since the on-chain contract uses an infinite deck with smart aces,
  * we compute: newCard = newScore - oldScore (adjusted for ace downgrades).
  */
-export function inferCard(oldScore, newScore, oldAces, newAces) {
+export function inferCard(oldScore, newScore, oldAces, newAces, lastCardHint = 0) {
   let value;
   const aceAdded = newAces > oldAces;
 
   if (aceAdded) {
-    // An ace was added. It could be 11 or 1 (if it triggered a downgrade).
-    // If score went up by 11, it's an ace counted as 11.
-    // If score went up by 1, it's an ace counted as 1 (was already over 21).
     const diff = newScore - oldScore;
     value = diff > 0 ? diff : 1;
     return { value, label: "A" };
   }
 
-  // For non-ace cards, score diff = card value.
-  // But if an existing ace was downgraded (11→1), diff = cardValue - 10.
-  // We detect this if oldAces > 0 and newAces < oldAces:
   if (newAces < oldAces) {
-    // Ace downgrade happened. Real card = diff + 10
     value = newScore - oldScore + 10;
   } else {
     value = newScore - oldScore;
   }
 
-  // Handle edge case where score didn't change (shouldn't happen in normal flow)
-  if (value <= 0) value = 0;
+  // Handle round reset (newScore is 0) or no change
+  if (value <= 0 && lastCardHint > 0) {
+    // If it's an Ace (1), decide if it should be 1 or 11 based on oldScore
+    if (lastCardHint === 1) {
+      value = oldScore + 11 <= 21 ? 11 : 1;
+    } else {
+      value = lastCardHint >= 10 ? 10 : lastCardHint;
+    }
+  } else if (value <= 0) {
+    value = 0;
+  }
 
-  const label = cardLabel(value);
+  const label = cardLabel(lastCardHint || value);
   return { value, label };
 }
 
-function cardLabel(value) {
+export function cardLabel(value) {
   if (value === 1) return "A";
-  if (value === 11) return "A";
-  if (value === 10) {
-    // Could be 10, J, Q, K — we can't distinguish, default to "10"
-    return "10";
-  }
+  if (value === 11) return "J";
+  if (value === 12) return "Q";
+  if (value === 13) return "K";
+  if (value === 10) return "10";
   return String(value);
 }
 
