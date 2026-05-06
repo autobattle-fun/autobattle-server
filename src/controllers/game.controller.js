@@ -7,6 +7,7 @@ import {
   listMatches,
   pauseMatch,
   resumeMatch,
+  getMatchByGameId,
 } from "../services/game.service.js";
 import {
   validate,
@@ -232,50 +233,22 @@ export async function getGameStatsController(request, response) {
 export async function searchByGameIdController(request, response) {
   const { gameId } = request.params;
   const id = parseInt(gameId);
-  if (isNaN(id))
+  if (isNaN(id)) {
     return response
       .status(400)
       .json({ success: false, error: "Invalid gameId." });
-
-  const cacheKey = `game:search:id:${id}`;
-
-  try {
-    const cached = await redis.get(cacheKey);
-    if (cached) return response.json(JSON.parse(cached));
-  } catch (err) {
-    logger.warn("Redis game search cache read error", {
-      gameId: id,
-      error: err.message,
-    });
   }
 
-  const { prisma } = await import("../db/prisma.js");
-  const match = await prisma.match.findUnique({
-    where: { gameId: id },
-  });
+  const result = await getMatchByGameId(id);
 
-  if (!match) {
+  if (!result) {
     return response
       .status(404)
       .json({ success: false, error: "Match not found." });
   }
 
-  const result = await getMatchState(match.id);
-  const responseData = {
+  return response.json({
     success: true,
     data: result,
-  };
-
-  try {
-    // Cache for 5s if active, 1h if resolved (matching getMatchState logic)
-    const ttl = result.match.status === "RESOLVED" ? 120 : 5;
-    await redis.setex(cacheKey, ttl, JSON.stringify(responseData));
-  } catch (err) {
-    logger.warn("Redis game search cache write error", {
-      gameId: id,
-      error: err.message,
-    });
-  }
-
-  return response.json(responseData);
+  });
 }

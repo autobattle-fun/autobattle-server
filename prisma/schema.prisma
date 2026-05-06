@@ -49,6 +49,8 @@ model Match {
 
   markets Market[] // One-to-many relationship for micro-markets
   rounds  MatchRound[] // Per-round logs
+
+  @@index([gameId])
 }
 
 // ── Round & Move Logging ──────────────────────────────────────────

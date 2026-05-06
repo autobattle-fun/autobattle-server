@@ -2,6 +2,7 @@ import { Connection, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import {
   getUserHistory,
   getPredictionDetail,
+  findUserByUsername,
 } from "../services/user.service.js";
 import { validate, listPredictionsSchema } from "../utils/validators.js";
 import { prisma } from "../db/prisma.js";
@@ -182,33 +183,14 @@ export async function createUser(request, response) {
  */
 export async function searchByUsernameController(request, response) {
   const { username } = request.params;
-  const cacheKey = `user:search:${username}`;
-
-  try {
-    const cached = await redis.get(cacheKey);
-    if (cached) return response.json(JSON.parse(cached));
-  } catch (err) {
-    logger.warn("Redis user search cache read error", { username, error: err.message });
-  }
-
-  const user = await prisma.user.findUnique({
-    where: { username },
-  });
+  const user = await findUserByUsername(username);
 
   if (!user) {
     return response.status(404).json({ success: false, error: "User not found." });
   }
 
-  const result = {
+  return response.json({
     success: true,
     data: user,
-  };
-
-  try {
-    await redis.setex(cacheKey, 60, JSON.stringify(result));
-  } catch (err) {
-    logger.warn("Redis user search cache write error", { username, error: err.message });
-  }
-
-  return response.json(result);
+  });
 }

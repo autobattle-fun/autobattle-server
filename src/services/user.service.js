@@ -11,7 +11,32 @@ export async function findUserByPrivyId(privyUserId) {
 }
 
 export async function findUserByUsername(username) {
-  return prisma.user.findUnique({ where: { username } });
+  const cacheKey = `user:search:${username}`;
+
+  try {
+    const cached = await redis.get(cacheKey);
+    if (cached) return JSON.parse(cached);
+  } catch (err) {
+    logger.warn("Redis user search cache read error", {
+      username,
+      error: err.message,
+    });
+  }
+
+  const user = await prisma.user.findUnique({ where: { username } });
+
+  if (user) {
+    try {
+      await redis.setex(cacheKey, 60, JSON.stringify(user));
+    } catch (err) {
+      logger.warn("Redis user search cache write error", {
+        username,
+        error: err.message,
+      });
+    }
+  }
+
+  return user;
 }
 
 export async function touchUserLastLogin(id) {
