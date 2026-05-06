@@ -5,6 +5,7 @@ import {
   predictionDetailController,
   getUserProfile,
   createUser,
+  getUserById,
 } from "../controllers/user.controller.js";
 import {
   requireAuth,
@@ -14,6 +15,7 @@ import { asyncHandler } from "../utils/async-handler.js";
 
 export const userRoutes = Router();
 
+userRoutes.get("/get/:id", asyncHandler(getUserById));
 userRoutes.get("/me", requireAuth, asyncHandler(meController));
 userRoutes.get("/profile/:username", asyncHandler(getUserProfile));
 userRoutes.post("/create", requireOptionalAuth, asyncHandler(createUser));

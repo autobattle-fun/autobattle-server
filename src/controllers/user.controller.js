@@ -81,6 +81,27 @@ export async function predictionDetailController(request, response) {
   });
 }
 
+export async function getUserById(request, response) {
+  const { id } = request.params;
+  const user = await prisma.user.findUnique({
+    where: {
+      id: id,
+    },
+  });
+
+  if (!user) {
+    return response.json({
+      success: true,
+      data: null,
+    });
+  }
+
+  return response.json({
+    success: true,
+    data: user,
+  });
+}
+
 export async function getUserProfile(request, response) {
   const { username } = request.params;
   const user = await prisma.user.findUnique({

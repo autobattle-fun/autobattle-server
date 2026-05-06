@@ -18,8 +18,8 @@ export class CommentService {
     });
   }
 
-  static async getCommentsByMarket(marketId) {
-    return await prisma.comment.findMany({
+  static async getCommentsByMarket(marketId, userId = null) {
+    const comments = await prisma.comment.findMany({
       where: { marketId },
       include: {
         user: {
@@ -30,12 +30,28 @@ export class CommentService {
         _count: {
           select: { commentLikes: true },
         },
+        commentLikes: userId
+          ? {
+              where: { userId },
+              select: { id: true },
+            }
+          : false,
       },
       orderBy: { createdAt: "desc" },
     });
+
+    if (userId) {
+      return comments.map((c) => ({
+        ...c,
+        isLiked: c.commentLikes.length > 0,
+        commentLikes: undefined,
+      }));
+    }
+
+    return comments;
   }
 
-  static async toggleLike(userId, commentId) {
+  static async toggleLike(userId, commentId, liked) {
     const existingLike = await prisma.commentLike.findFirst({
       where: {
         userId,
@@ -43,18 +59,11 @@ export class CommentService {
       },
     });
 
-    if (existingLike) {
-      await prisma.$transaction([
-        prisma.commentLike.delete({
-          where: { id: existingLike.id },
-        }),
-        prisma.comment.update({
-          where: { id: commentId },
-          data: { likes: { decrement: 1 } },
-        }),
-      ]);
-      return { liked: false };
-    } else {
+    // If 'liked' is provided, we use it as the target state.
+    // Otherwise, we toggle the existing state.
+    const shouldBeLiked = liked !== undefined ? liked : !existingLike;
+
+    if (shouldBeLiked && !existingLike) {
       await prisma.$transaction([
         prisma.commentLike.create({
           data: {
@@ -68,6 +77,19 @@ export class CommentService {
         }),
       ]);
       return { liked: true };
+    } else if (!shouldBeLiked && existingLike) {
+      await prisma.$transaction([
+        prisma.commentLike.delete({
+          where: { id: existingLike.id },
+        }),
+        prisma.comment.update({
+          where: { id: commentId },
+          data: { likes: { decrement: 1 } },
+        }),
+      ]);
+      return { liked: false };
     }
+
+    return { liked: !!existingLike };
   }
 }
