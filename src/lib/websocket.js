@@ -219,108 +219,108 @@ async function handlePing(socket, message) {
     logger.warn("Error building pong response", { error: error.message });
   }
 
-  // socket.emit("pong", {
-  //   latency,
-  //   gameState,
-  //   market,
-  //   logs,
-  //   countdown,
-  //   serverTimestamp,
-  // });
+  socket.emit("pong", {
+    latency,
+    gameState,
+    market,
+    logs,
+    countdown,
+    serverTimestamp,
+  });
 
   // return;
 
   // Test pong data
-  socket.emit("pong", {
-    latency,
-    gameState: {
-      gameId: 999,
-      gameStatus: "ACTIVE",
-      serverStatus: "ACTIVE",
-      activePlayer: { color: "RED", name: "Donald Trump" },
-      playerStatus: { red: "THINKING", blue: "WAITING" },
-      phase: "RedTurn",
-      roundNumber: 3,
-      red: {
-        hp: 9,
-        score: 15,
-        name: "Donald Trump",
-        llm: "llama-3",
-        cards: [
-          { value: 7, label: "7" },
-          { value: 8, label: "8" },
-        ],
-        celebrity: {
-          id: "cmosz852i0000zkjvtee3rztr",
-          name: "Donald Trump",
-          image: "https://abc.deforge.io/trump.jpg",
-          matchesPlayed: 10,
-          wins: 6,
-          winRate: 0.6,
-        },
-      },
-      blue: {
-        hp: 8,
-        score: 12,
-        name: "Joe Biden",
-        llm: "mixtral",
-        cards: [
-          { value: 10, label: "10" },
-          { value: 2, label: "2" },
-        ],
-        celebrity: {
-          id: "cmosz871r0001zkjvm88mf32e",
-          name: "Joe Biden",
-          image: "https://abc.deforge.io/biden.jpg",
-          matchesPlayed: 8,
-          wins: 3,
-          winRate: 0.375,
-        },
-      },
-    },
-    market: {
-      mainMarket: {
-        id: "cmot8795k0001ti8o4pxh8dp7",
-        matchId: "cmot8795k0001ti8o4pxh8dp7",
-        marketIndex: 0,
-        targetRound: null,
-        status: "OPEN",
+  // socket.emit("pong", {
+  //   latency,
+  //   gameState: {
+  //     gameId: 999,
+  //     gameStatus: "ACTIVE",
+  //     serverStatus: "ACTIVE",
+  //     activePlayer: { color: "RED", name: "Donald Trump" },
+  //     playerStatus: { red: "THINKING", blue: "WAITING" },
+  //     phase: "RedTurn",
+  //     roundNumber: 3,
+  //     red: {
+  //       hp: 9,
+  //       score: 15,
+  //       name: "Donald Trump",
+  //       llm: "llama-3",
+  //       cards: [
+  //         { value: 7, label: "7" },
+  //         { value: 8, label: "8" },
+  //       ],
+  //       celebrity: {
+  //         id: "cmosz852i0000zkjvtee3rztr",
+  //         name: "Donald Trump",
+  //         image: "https://abc.deforge.io/trump.jpg",
+  //         matchesPlayed: 10,
+  //         wins: 6,
+  //         winRate: 0.6,
+  //       },
+  //     },
+  //     blue: {
+  //       hp: 8,
+  //       score: 12,
+  //       name: "Joe Biden",
+  //       llm: "mixtral",
+  //       cards: [
+  //         { value: 10, label: "10" },
+  //         { value: 2, label: "2" },
+  //       ],
+  //       celebrity: {
+  //         id: "cmosz871r0001zkjvm88mf32e",
+  //         name: "Joe Biden",
+  //         image: "https://abc.deforge.io/biden.jpg",
+  //         matchesPlayed: 8,
+  //         wins: 3,
+  //         winRate: 0.375,
+  //       },
+  //     },
+  //   },
+  //   market: {
+  //     mainMarket: {
+  //       id: "cmot8795k0001ti8o4pxh8dp7",
+  //       matchId: "cmot8795k0001ti8o4pxh8dp7",
+  //       marketIndex: 0,
+  //       targetRound: null,
+  //       status: "OPEN",
 
-        yesPrice: 0.5,
-        noPrice: 0.5,
-        totalVolumeRaw: 0,
-      },
-      roundMarket: {
-        id: "cmot879e60002ti8ohs647mrv",
-        matchId: "cmot879e60002ti8ohs647mrv",
-        marketIndex: 1,
-        targetRound: 1,
-        status: "OPEN",
+  //       yesPrice: 0.5,
+  //       noPrice: 0.5,
+  //       totalVolumeRaw: 0,
+  //     },
+  //     roundMarket: {
+  //       id: "cmot879e60002ti8ohs647mrv",
+  //       matchId: "cmot879e60002ti8ohs647mrv",
+  //       marketIndex: 1,
+  //       targetRound: 1,
+  //       status: "OPEN",
 
-        yesPrice: 0.5,
-        noPrice: 0.5,
-        totalVolumeRaw: 0,
-      },
-    },
-    logs: [
-      {
-        role: "red",
-        message: "I Hit the card because I wanted to",
-        timestamp: serverTimestamp,
-      },
-      {
-        role: "blue",
-        message: "I used 10. I think it will work. I believe this is the best.",
-        timestamp: serverTimestamp - 1000,
-      },
-      {
-        role: "system",
-        message: "Smart Contract initialized. Awaiting Phase 1...",
-        timestamp: serverTimestamp - 2000,
-      },
-    ],
-    countdown: 228,
-  });
+  //       yesPrice: 0.5,
+  //       noPrice: 0.5,
+  //       totalVolumeRaw: 0,
+  //     },
+  //   },
+  //   logs: [
+  //     {
+  //       role: "red",
+  //       message: "I Hit the card because I wanted to",
+  //       timestamp: serverTimestamp,
+  //     },
+  //     {
+  //       role: "blue",
+  //       message: "I used 10. I think it will work. I believe this is the best.",
+  //       timestamp: serverTimestamp - 1000,
+  //     },
+  //     {
+  //       role: "system",
+  //       message: "Smart Contract initialized. Awaiting Phase 1...",
+  //       timestamp: serverTimestamp - 2000,
+  //     },
+  //   ],
+  //   countdown: 228,
+  // });
 }
 
 // ── Event Broadcasting ──────────────────────────────────────────────
