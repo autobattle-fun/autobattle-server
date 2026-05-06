@@ -153,48 +153,24 @@ export async function startMatch() {
   await setMatchBreakCountdown(preparingEndUnix, "PREPARING");
 
   await initGameState({ gameId, matchId: result.match.id, matchUuid });
-  wsEvents.matchCreated(
-    {
-      game: {
-        gameId,
-        gameStatus: "MATCHMAKING",
-        serverStatus: "ACTIVE",
-        activePlayer: { color: "RED", name: redName },
-        playerStatus: { red: "WAITING", blue: "WAITING" },
-        phase: "AwaitingInitialDeal",
-        roundNumber: 1,
-        red: {
-          hp: 10,
-          score: 0,
-          name: redName,
-          llm: redModel,
-          cards: [],
-          image: redImage,
-        },
-        blue: {
-          hp: 10,
-          score: 0,
-          name: blueName,
-          llm: blueModel,
-          cards: [],
-          image: blueImage,
-        },
-      },
+  wsEvents.matchCreated({
+    game: {
+      gameId,
+      gameStatus: "MATCHMAKING",
+      serverStatus: "ACTIVE",
+      activePlayer: { color: "RED", name: redName },
+      playerStatus: { red: "WAITING", blue: "WAITING" },
+      phase: "AwaitingInitialDeal",
+      roundNumber: 1,
+      red: { hp: 10, score: 0, name: redName, llm: redModel, cards: [], image: redImage },
+      blue: { hp: 10, score: 0, name: blueName, llm: blueModel, cards: [], image: blueImage },
     },
-    gameId,
-  );
+  }, gameId);
   wsEvents.breakPreparing({
     nextMatchAt: new Date(preparingEndUnix * 1000).toISOString(),
   });
-  await addMatchLog(
-    gameId,
-    "System",
-    `Match #${gameId} created — entering preparation phase`,
-  );
-  logger.info("Match started (PREPARING)", {
-    matchId: result.match.id,
-    gameId,
-  });
+  await addMatchLog(gameId, "System", `Match #${gameId} created — entering preparation phase`);
+  logger.info("Match started (PREPARING)", { matchId: result.match.id, gameId });
   return result;
 }
 
@@ -227,12 +203,9 @@ export async function playRound(matchId) {
   const blueHpBefore = match.blueHp;
 
   logger.info("Playing round", { matchId, gameId, round: match.roundNumber });
-  wsEvents.roundStarted(
-    {
-      roundNumber: match.roundNumber,
-    },
-    matchId,
-  );
+  wsEvents.roundStarted({
+    roundNumber: match.roundNumber,
+  }, matchId);
   await addMatchLog(gameId, "System", `Round ${match.roundNumber} started`);
 
   if (match.status === "MATCHMAKING") {
@@ -292,6 +265,7 @@ export async function playRound(matchId) {
     gameId,
   });
   gs = await solanaService.fetchGameState(gameId);
+
   let state = await getGameState(gameId);
   if (!state) state = await initGameState({ gameId, matchId, matchUuid });
 
@@ -306,37 +280,17 @@ export async function playRound(matchId) {
   const blueScoreInit = gs.p2Score;
 
   state = await getGameState(gameId);
-  wsEvents.cardsDealt(
-    {
-      game: {
-        activePlayer: {
-          color: parseColor(gs.activePlayer),
-          name:
-            parseColor(gs.activePlayer) === "RED"
-              ? match.redName
-              : match.blueName,
-        },
-        playerStatus: state?.playerStatus || {
-          red: "WAITING",
-          blue: "WAITING",
-        },
-        phase: parseGamePhase(gs.phase),
-        red: buildPlayerState(gs, state, match, "RED"),
-        blue: buildPlayerState(gs, state, match, "BLUE"),
-      },
+  wsEvents.cardsDealt({
+    game: {
+      activePlayer: { color: parseColor(gs.activePlayer), name: parseColor(gs.activePlayer) === "RED" ? match.redName : match.blueName },
+      playerStatus: state?.playerStatus || { red: "WAITING", blue: "WAITING" },
+      phase: parseGamePhase(gs.phase),
+      red: buildPlayerState(gs, state, match, "RED"),
+      blue: buildPlayerState(gs, state, match, "BLUE"),
     },
-    matchId,
-  );
-  await addMatchLog(
-    gameId,
-    "Red",
-    `Dealt ${redInitCard.label} (score: ${gs.p1Score})`,
-  );
-  await addMatchLog(
-    gameId,
-    "Blue",
-    `Dealt ${blueInitCard.label} (score: ${gs.p2Score})`,
-  );
+  }, matchId);
+  await addMatchLog(gameId, "Red", `Dealt ${redInitCard.label} (score: ${gs.p1Score})`);
+  await addMatchLog(gameId, "Blue", `Dealt ${blueInitCard.label} (score: ${gs.p2Score})`);
 
   // Step 2: Agent turns (LLM-driven hit/stay)
   await runAgentTurns(gameId, gs, match);
@@ -372,18 +326,11 @@ export async function playRound(matchId) {
   await syncOnChainState(gameId, gs, parseGamePhase(gs.phase));
 
   state = await getGameState(gameId);
-  wsEvents.riverFlowing(
-    {
-      playerStatus: state?.playerStatus || { red: "WAITING", blue: "WAITING" },
-      phase: parseGamePhase(gs.phase),
-    },
-    matchId,
-  );
-  await addMatchLog(
-    gameId,
-    "System",
-    `River revealed — Red: ${riverRedCard.label} (${gs.p1Score}), Blue: ${riverBlueCard.label} (${gs.p2Score})`,
-  );
+  wsEvents.riverFlowing({
+    playerStatus: state?.playerStatus || { red: "WAITING", blue: "WAITING" },
+    phase: parseGamePhase(gs.phase),
+  }, matchId);
+  await addMatchLog(gameId, "System", `River revealed — Red: ${riverRedCard.label} (${gs.p1Score}), Blue: ${riverBlueCard.label} (${gs.p2Score})`);
 
   // Step 4: Resolve round (handled automatically by contract during FINAL_REVEAL)
   gs = await solanaService.fetchGameState(gameId);
@@ -392,8 +339,7 @@ export async function playRound(matchId) {
   const finishedRound = phase === "ENDED" ? gs.roundNumber : gs.roundNumber - 1;
 
   let roundWinningOutcome = null;
-  if (gs.p1Hp < redHpBefore)
-    roundWinningOutcome = "NO"; // Blue won
+  if (gs.p1Hp < redHpBefore) roundWinningOutcome = "NO"; // Blue won
   else if (gs.p2Hp < blueHpBefore) roundWinningOutcome = "YES"; // Red won
 
   const roundMarketsToResolve = await prisma.market.findMany({
@@ -414,7 +360,7 @@ export async function playRound(matchId) {
     data: {
       status: "RESOLVED",
       winningOutcome: roundWinningOutcome,
-      resolvesAt: new Date(),
+      resolvesAt: new Date()
     },
   });
 
@@ -438,12 +384,9 @@ export async function playRound(matchId) {
   // Step 5: Tiebreaker loop
   while (phase === "AWAITING_TIEBREAKER_VRF") {
     logger.info("Tiebreaker — sudden death", { gameId });
-    wsEvents.tiebreakerStarted(
-      {
-        phase: "AwaitingTiebreaker",
-      },
-      matchId,
-    );
+    wsEvents.tiebreakerStarted({
+      phase: "AwaitingTiebreaker",
+    }, matchId);
 
     const preTbRedScore = gs.p1Score;
     const preTbBlueScore = gs.p2Score;
@@ -472,18 +415,12 @@ export async function playRound(matchId) {
     await recordTiebreakerCards(gameId, tbRedCard, tbBlueCard);
 
     state = await getGameState(gameId);
-    wsEvents.tiebreakerResolved(
-      {
-        playerStatus: state?.playerStatus || {
-          red: "WAITING",
-          blue: "WAITING",
-        },
-        phase: parseGamePhase(gs.phase),
-        red: buildPlayerState(gs, state, match, "RED"),
-        blue: buildPlayerState(gs, state, match, "BLUE"),
-      },
-      matchId,
-    );
+    wsEvents.tiebreakerResolved({
+      playerStatus: state?.playerStatus || { red: "WAITING", blue: "WAITING" },
+      phase: parseGamePhase(gs.phase),
+      red: buildPlayerState(gs, state, match, "RED"),
+      blue: buildPlayerState(gs, state, match, "BLUE"),
+    }, matchId);
 
     gs = await solanaService.fetchGameState(gameId);
     phase = parseGamePhase(gs.phase);
@@ -597,40 +534,23 @@ export async function playRound(matchId) {
   const updatedMatch = await syncMatchState(match, gs);
 
   state = await getGameState(gameId);
-  wsEvents.roundResolved(
-    {
-      playerStatus: state?.playerStatus || { red: "WAITING", blue: "WAITING" },
-      phase,
-      red: buildPlayerState(gs, state, match, "RED"),
-      blue: buildPlayerState(gs, state, match, "BLUE"),
-    },
-    matchId,
-  );
-  await addMatchLog(
-    gameId,
-    "System",
-    `Round ${match.roundNumber} resolved — Winner: ${roundWinner || "TIE"}, Damage: ${damageDealt}`,
-  );
+  wsEvents.roundResolved({
+    playerStatus: state?.playerStatus || { red: "WAITING", blue: "WAITING" },
+    phase,
+    red: buildPlayerState(gs, state, match, "RED"),
+    blue: buildPlayerState(gs, state, match, "BLUE"),
+  }, matchId);
+  await addMatchLog(gameId, "System", `Round ${match.roundNumber} resolved — Winner: ${roundWinner || "TIE"}, Damage: ${damageDealt}`);
 
   if (updatedMatch.status === "RESOLVED") {
-    wsEvents.matchEnded(
-      {
-        phase: "Ended",
-        gameId,
-        red: buildPlayerState(gs, state, match, "RED"),
-        blue: buildPlayerState(gs, state, match, "BLUE"),
-      },
-      matchId,
-    );
-    await addMatchLog(
+    wsEvents.matchEnded({
+      phase: "Ended",
       gameId,
-      "System",
-      `Match ended — Winner: ${updatedMatch.winner}`,
-    );
-    wsEvents.logBroadcast(
-      "System",
-      `Match #${gameId} ended — Winner: ${updatedMatch.winner}`,
-    );
+      red: buildPlayerState(gs, state, match, "RED"),
+      blue: buildPlayerState(gs, state, match, "BLUE"),
+    }, matchId);
+    await addMatchLog(gameId, "System", `Match ended — Winner: ${updatedMatch.winner}`);
+    wsEvents.logBroadcast("System", `Match #${gameId} ended — Winner: ${updatedMatch.winner}`);
     await deleteGameState(gameId);
     await clearMatchLogs(gameId);
 
@@ -650,29 +570,32 @@ export async function playRound(matchId) {
 // ── Agent Turns ─────────────────────────────────────────────────────
 
 async function runAgentTurns(gameId, initialGs, match) {
-  let gs = initialGs;
   let currentPlayer = "RED";
+  let state = await getGameState(gameId);
 
-  while (!gs.p1Stayed || !gs.p2Stayed) {
+  while (!state.red.stayed || !state.blue.stayed) {
     if (currentPlayer === "RED") {
-      if (!gs.p1Stayed) {
-        await runSingleAgentTurn(gameId, "RED", gs, match);
-        gs = await solanaService.fetchGameState(gameId);
+      if (!state.red.stayed) {
+        await runSingleAgentTurn(gameId, "RED", match);
+        state = await getGameState(gameId);
       }
       currentPlayer = "BLUE";
     } else {
-      if (!gs.p2Stayed) {
-        await runSingleAgentTurn(gameId, "BLUE", gs, match);
-        gs = await solanaService.fetchGameState(gameId);
+      if (!state.blue.stayed) {
+        await runSingleAgentTurn(gameId, "BLUE", match);
+        state = await getGameState(gameId);
       }
       currentPlayer = "RED";
     }
   }
 }
 
-async function runSingleAgentTurn(gameId, player, gs, match) {
+async function runSingleAgentTurn(gameId, player, match) {
   const isRed = player === "RED";
   const model = isRed ? match.llmRed : match.llmBlue;
+
+  let state = await getGameState(gameId);
+  let gs = await solanaService.fetchGameState(gameId);
 
   let myScore = isRed ? gs.p1Score : gs.p2Score;
   let oppScore = isRed ? gs.p2Score : gs.p1Score;
@@ -682,10 +605,15 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
   const myHp = isRed ? match.redHp : match.blueHp;
   const oppHp = isRed ? match.blueHp : match.redHp;
 
-  if (myStayed) return;
+  if (myStayed) {
+    // Auto-heal Redis if it fell out of sync due to an RPC timeout
+    await updateGameState(gameId, {
+      [player.toLowerCase()]: { ...state[player.toLowerCase()], stayed: true }
+    });
+    return;
+  }
 
   {
-    let state = await getGameState(gameId);
     state = await updateGameState(gameId, {
       playerStatus: {
         ...state.playerStatus,
@@ -731,9 +659,9 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
         );
       } catch (hitError) {
         if (hitError.message && hitError.message.includes("AlreadyStayed")) {
-          logger.warn("Agent tried to HIT after staying — forced STAY", {
-            gameId,
-            player,
+          logger.warn("Agent tried to HIT after staying — forced STAY", { gameId, player });
+          await updateGameState(gameId, {
+            [isRed ? "red" : "blue"]: { ...state[isRed ? "red" : "blue"], stayed: true },
           });
           return;
         }
@@ -744,6 +672,17 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
       const newScore = isRed ? updated.p1Score : updated.p2Score;
       const newAces = isRed ? updated.p1Aces : updated.p2Aces;
       const rawCardValue = isRed ? updated.p1LastCard : updated.p2LastCard;
+
+      // --- SANITIZATION ---
+      // Check if hitting forced a stay (score >= 21)
+      const contractStayed = isRed ? updated.p1Stayed : updated.p2Stayed;
+
+      if (contractStayed) {
+        state = await updateGameState(gameId, {
+          [isRed ? "red" : "blue"]: { ...state[isRed ? "red" : "blue"], stayed: true },
+        });
+        myStayed = true;
+      }
 
       let card;
       if (rawCardValue) {
@@ -771,13 +710,11 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
         txSignature: txSig,
       });
 
-      await new Promise((r) => setTimeout(r, env.MOCK_SOLANA ? 100 : 5000)); // Buffer for tx propagation
+      await new Promise((r) => setTimeout(r, env.MOCK_SOLANA ? 100 : 5000));
 
       myScore = newScore;
       myAces = newAces;
       oppScore = isRed ? updated.p2Score : updated.p1Score;
-      myStayed = isRed ? updated.p1Stayed : updated.p2Stayed;
-      oppStayed = isRed ? updated.p2Stayed : updated.p1Stayed;
 
       state = await updateGameState(gameId, {
         playerStatus: {
@@ -787,26 +724,14 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
       });
 
       state = await getGameState(gameId);
-      wsEvents.agentDecision(
-        {
-          playerStatus: state?.playerStatus || {
-            red: "WAITING",
-            blue: "WAITING",
-          },
-          ...(myStayed || newScore !== scoreBefore
-            ? {
-                red: buildPlayerState(updated, state, match, "RED"),
-                blue: buildPlayerState(updated, state, match, "BLUE"),
-              }
-            : {}),
-        },
-        match.id,
-      );
-      await addMatchLog(
-        gameId,
-        player === "RED" ? "Red" : "Blue",
-        `HIT — dealt ${card.label}, score: ${scoreBefore} → ${newScore}`,
-      );
+      wsEvents.agentDecision({
+        playerStatus: state?.playerStatus || { red: "WAITING", blue: "WAITING" },
+        ...(myStayed || newScore !== scoreBefore ? {
+          red: buildPlayerState(updated, state, match, "RED"),
+          blue: buildPlayerState(updated, state, match, "BLUE"),
+        } : {}),
+      }, match.id);
+      await addMatchLog(gameId, player === "RED" ? "Red" : "Blue", `HIT — dealt ${card.label}, score: ${scoreBefore} → ${newScore}`);
 
       if (myStayed) {
         await recordMove(gameId, {
@@ -819,26 +744,30 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
           cardDealt: null,
           txSignature: null,
         });
-        wsEvents.agentDecision(
-          {
-            playerStatus: state?.playerStatus || {
-              red: "WAITING",
-              blue: "WAITING",
-            },
-            red: buildPlayerState(updated, state, match, "RED"),
-            blue: buildPlayerState(updated, state, match, "BLUE"),
-          },
-          match.id,
-        );
-        return;
+        wsEvents.agentDecision({
+          playerStatus: state?.playerStatus || { red: "WAITING", blue: "WAITING" },
+          red: buildPlayerState(updated, state, match, "RED"),
+          blue: buildPlayerState(updated, state, match, "BLUE"),
+        }, match.id);
       }
+
       await syncOnChainState(gameId, updated, parseGamePhase(updated.phase));
+
     } else {
       const txSig = await withRetry(() => solanaService.stay(gameId, player), {
         label: `stay:${player}`,
         matchId: match.id,
         gameId,
       });
+
+      state = await updateGameState(gameId, {
+        [isRed ? "red" : "blue"]: { ...state[isRed ? "red" : "blue"], stayed: true },
+        playerStatus: {
+          ...state.playerStatus,
+          [player.toLowerCase()]: "FINALIZED",
+        },
+      });
+
       await recordMove(gameId, {
         player,
         action: "STAY",
@@ -850,32 +779,16 @@ async function runSingleAgentTurn(gameId, player, gs, match) {
         txSignature: txSig,
       });
 
-      await new Promise((r) => setTimeout(r, env.MOCK_SOLANA ? 100 : 5000)); // Buffer for tx propagation
-
-      state = await updateGameState(gameId, {
-        playerStatus: {
-          ...state.playerStatus,
-          [player.toLowerCase()]: "FINALIZED",
-        },
-      });
+      await new Promise((r) => setTimeout(r, env.MOCK_SOLANA ? 100 : 5000));
 
       state = await getGameState(gameId);
-      wsEvents.agentDecision(
-        {
-          playerStatus: state?.playerStatus || {
-            red: "WAITING",
-            blue: "WAITING",
-          },
-          red: buildPlayerState(gs, state, match, "RED"),
-          blue: buildPlayerState(gs, state, match, "BLUE"),
-        },
-        match.id,
-      );
-      await addMatchLog(
-        gameId,
-        player === "RED" ? "Red" : "Blue",
-        `STAY — score: ${scoreBefore}`,
-      );
+      const latestGs = await solanaService.fetchGameState(gameId);
+      wsEvents.agentDecision({
+        playerStatus: state?.playerStatus || { red: "WAITING", blue: "WAITING" },
+        red: buildPlayerState(latestGs, state, match, "RED"),
+        blue: buildPlayerState(latestGs, state, match, "BLUE"),
+      }, match.id);
+      await addMatchLog(gameId, player === "RED" ? "Red" : "Blue", `STAY — score: ${scoreBefore}`);
       return;
     }
   }
@@ -970,10 +883,7 @@ export async function pauseMatch(matchId, reason = "Manual pause") {
     data: { status: "PAUSED" },
   });
 
-  wsEvents.gamePaused(
-    { gameId: match.gameId, serverStatus: "PAUSED", reason, error: null },
-    matchId,
-  );
+  wsEvents.gamePaused({ gameId: match.gameId, serverStatus: "PAUSED", reason, error: null }, matchId);
   logger.info("Match manually paused", { matchId, reason });
   return updated;
 }
@@ -1109,29 +1019,16 @@ export async function listMatches({ status, page = 1, limit = 20 } = {}) {
   const [matches, total] = await Promise.all([
     prisma.match.findMany({
       where,
-
-      select: {
-        id: true,
-        gameId: true,
-        status: true,
-        redName: true,
-        blueName: true,
-        redHp: true,
-        blueHp: true,
-        winner: true,
-        roundNumber: true,
-        createdAt: true,
-        _count: {
-          select: {
-            markets: true,
-          },
+      include: {
+        markets: {
+          where: { marketType: "MAIN" },
+          select: { id: true, slug: true, status: true, title: true },
         },
       },
       orderBy: { createdAt: "desc" },
       skip,
       take: limit,
     }),
-
     prisma.match.count({ where }),
   ]);
 
@@ -1190,6 +1087,6 @@ function buildPlayerState(gs, redisState, match, color) {
     score: isRed ? gs.p1Score : gs.p2Score,
     name: isRed ? match.redName : match.blueName,
     llm: isRed ? match.llmRed : match.llmBlue,
-    cards: isRed ? redisState?.red?.cards || [] : redisState?.blue?.cards || [],
+    cards: isRed ? (redisState?.red?.cards || []) : (redisState?.blue?.cards || []),
   };
 }

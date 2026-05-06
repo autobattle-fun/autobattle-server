@@ -159,7 +159,8 @@ function getBustProbDescription(score) {
  * @returns {Promise<{action: "HIT" | "STAY", reason: string}>} Parsed decision
  */
 export async function callLlmAgent({ chatId, model, query, name }) {
-  const endpoint = `${env.LLM_API_ENDPOINT}?chatId=${encodeURIComponent(chatId)}`;
+  // const endpoint = `${env.LLM_API_ENDPOINT}?chatId=${encodeURIComponent(chatId)}`;
+  const endpoint = env.LLM_API_ENDPOINT;
 
   const celebrity = await getCelebrityByName(name);
   const behaviourPrompt = celebrity?.prompt || "You are a standard AI agent.";
