@@ -38,6 +38,11 @@ model Match {
   redName   String @default("Red")
   blueName  String @default("Blue")
 
+  redCelebId  String?
+  blueCelebId String?
+  redCeleb    Celebrity? @relation("RedCelebrity", fields: [redCelebId], references: [id])
+  blueCeleb   Celebrity? @relation("BlueCelebrity", fields: [blueCelebId], references: [id])
+
   status      MatchStatus @default(MATCHMAKING)
   roundNumber Int         @default(1)
   redHp       Int         @default(10)
@@ -225,10 +230,18 @@ enum ResolutionMethod {
 }
 
 model Celebrity {
-  id        String   @id @default(cuid())
-  name      String   @unique
-  image     String
-  prompt    String
+  id     String @id @default(cuid())
+  name   String @unique
+  image  String
+  prompt String
+
+  matchesPlayed Int   @default(0)
+  wins          Int   @default(0)
+  winRate       Float @default(0)
+
+  matchesAsRed  Match[] @relation("RedCelebrity")
+  matchesAsBlue Match[] @relation("BlueCelebrity")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

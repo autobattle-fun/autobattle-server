@@ -9,7 +9,7 @@ import { notifyError } from "./telegram.js";
 // logic. On final failure, the match is paused and devs are notified.
 
 const DEFAULT_MAX_RETRIES = 3;
-const BACKOFF_BASE_MS = 1000; // 1s, 2s, 4s
+const BACKOFF_BASE_MS = 10000; // 10s, 20s, 40s
 
 /**
  * Execute an async function with retry logic and automatic pause on failure.

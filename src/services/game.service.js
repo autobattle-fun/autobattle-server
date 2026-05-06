@@ -112,6 +112,8 @@ export async function startMatch() {
         llmBlue: blueModel,
         redName,
         blueName,
+        redCelebId: redCeleb.id,
+        blueCelebId: blueCeleb.id,
         status: "MATCHMAKING",
       },
     });
@@ -952,6 +954,10 @@ async function syncMatchState(match, gs) {
       status: isEnded ? "RESOLVED" : "ACTIVE",
       winner: winner || undefined,
     },
+    include: {
+      redCeleb: true,
+      blueCeleb: true,
+    }
   });
 
   if (isEnded) {
@@ -965,9 +971,36 @@ async function syncMatchState(match, gs) {
       },
     });
 
-    await prisma.market.updateMany({
-      where: { matchId: match.id, marketType: "MAIN" },
-      data: { status: "RESOLVED", winningOutcome, resolvesAt: new Date() },
+    await prisma.$transaction(async (tx) => {
+      // 1. Resolve markets
+      await tx.market.updateMany({
+        where: { matchId: match.id, marketType: "MAIN" },
+        data: { status: "RESOLVED", winningOutcome, resolvesAt: new Date() },
+      });
+
+      // 2. Update Celebrity Stats
+      if (updatedMatch.redCelebId && updatedMatch.blueCelebId) {
+        const redWon = winner === "RED";
+        const blueWon = winner === "BLUE";
+        
+        const redCelebMatches = (updatedMatch.redCeleb?.matchesPlayed || 0) + 1;
+        const redCelebWins = (updatedMatch.redCeleb?.wins || 0) + (redWon ? 1 : 0);
+        const redCelebWinRate = redCelebWins / redCelebMatches;
+
+        const blueCelebMatches = (updatedMatch.blueCeleb?.matchesPlayed || 0) + 1;
+        const blueCelebWins = (updatedMatch.blueCeleb?.wins || 0) + (blueWon ? 1 : 0);
+        const blueCelebWinRate = blueCelebWins / blueCelebMatches;
+
+        await tx.celebrity.update({
+          where: { id: updatedMatch.redCelebId },
+          data: { matchesPlayed: redCelebMatches, wins: redCelebWins, winRate: redCelebWinRate }
+        });
+
+        await tx.celebrity.update({
+          where: { id: updatedMatch.blueCelebId },
+          data: { matchesPlayed: blueCelebMatches, wins: blueCelebWins, winRate: blueCelebWinRate }
+        });
+      }
     });
 
     for (const m of mainMarketsToResolve) {
