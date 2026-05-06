@@ -556,6 +556,17 @@ export async function verifyClaimController(req, res) {
       });
     }
 
+    const market = await prisma.market.findUnique({
+      where: { id: marketId },
+    });
+
+    if (!market || market.status !== "RESOLVED" || !market.winningOutcome) {
+      return res.status(400).json({
+        success: false,
+        error: "Market is not resolved or lacks a winning outcome.",
+      });
+    }
+
     // 3. Fetch the pending predictions to calculate earnings
     const pendingPredictions = await prisma.prediction.findMany({
       where: {
@@ -574,14 +585,16 @@ export async function verifyClaimController(req, res) {
     }
 
     // Calculate total earned: 1 winning share = 1 payout token
-    const tokensEarned = pendingPredictions.reduce(
-      (sum, p) => sum + Number(p.shareAmount),
-      0,
-    );
+    const tokensEarned = pendingPredictions.reduce((sum, p) => {
+      if (p.side === market.winningOutcome) {
+        return sum + Number(p.shareAmount);
+      }
+      return sum;
+    }, 0);
 
     // 4. Update the database securely using a Transaction
-    await prisma.$transaction([
-      // Mark predictions as claimed
+    const dbOperations = [
+      // Mark all pending predictions for this market as claimed
       prisma.prediction.updateMany({
         where: {
           marketId: marketId,
@@ -590,14 +603,22 @@ export async function verifyClaimController(req, res) {
         },
         data: { hasClaimed: true },
       }),
-      prisma.user.update({
-        where: { id: userRecord.id },
-        data: {
-          totalWins: { increment: 1 },
-          totalEarnings: { increment: tokensEarned },
-        },
-      }),
-    ]);
+    ];
+
+    // Only update the user's win stats if they actually had winning shares
+    if (tokensEarned > 0) {
+      dbOperations.push(
+        prisma.user.update({
+          where: { id: userRecord.id },
+          data: {
+            totalWins: { increment: 1 },
+            totalEarnings: { increment: tokensEarned },
+          },
+        }),
+      );
+    }
+
+    await prisma.$transaction(dbOperations);
 
     return res.status(200).json({
       success: true,

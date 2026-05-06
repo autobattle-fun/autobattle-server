@@ -268,7 +268,7 @@ export async function searchByGameIdController(request, response) {
 
   try {
     // Cache for 5s if active, 1h if resolved (matching getMatchState logic)
-    const ttl = result.match.status === "RESOLVED" ? 3600 : 5;
+    const ttl = result.match.status === "RESOLVED" ? 120 : 5;
     await redis.setex(cacheKey, ttl, JSON.stringify(responseData));
   } catch (err) {
     logger.warn("Redis game search cache write error", {
