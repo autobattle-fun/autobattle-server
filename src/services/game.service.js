@@ -175,7 +175,7 @@ export async function startMatch() {
           name: redName,
           llm: redModel,
           cards: [],
-          image: redImage,
+          celebrity: redCeleb,
         },
         blue: {
           hp: 10,
@@ -183,7 +183,7 @@ export async function startMatch() {
           name: blueName,
           llm: blueModel,
           cards: [],
-          image: blueImage,
+          celebrity: blueCeleb,
         },
       },
       market,
@@ -210,7 +210,11 @@ export async function startMatch() {
 export async function playRound(matchId) {
   const match = await prisma.match.findUnique({
     where: { id: matchId },
-    include: { markets: { where: { marketIndex: 0 } } },
+    include: { 
+      markets: { where: { marketIndex: 0 } },
+      redCeleb: true,
+      blueCeleb: true
+    },
   });
   if (!match) {
     const e = new Error("Match not found");
@@ -1427,5 +1431,6 @@ function buildPlayerState(gs, redisState, match, color) {
     name: isRed ? match.redName : match.blueName,
     llm: isRed ? match.llmRed : match.llmBlue,
     cards: isRed ? redisState?.red?.cards || [] : redisState?.blue?.cards || [],
+    celebrity: isRed ? match.redCeleb : match.blueCeleb,
   };
 }
