@@ -1035,6 +1035,39 @@ export const fireEventMethods = {
         "game:resumed",
         {
           gameId: 999,
+          serverStatus: "RESUMED",
+          gameState: {
+            matchId: "dummy-match-id-123",
+            gameId: 999,
+            gameStatus: "ACTIVE",
+            serverStatus: "ACTIVE",
+            activePlayer: { color: "RED", name: "Donald Trump" },
+            playerStatus: { red: "WAITING", blue: "WAITING" },
+            roundNumber: 1,
+            red: {
+              hp: 10, score: 15, name: "Donald Trump", llm: "llama-3", cards: [], celebrity: {
+                id: "cmosz852i0000zkjvtee3rztr",
+                name: "Donald Trump",
+                image: "https://abc.deforge.io/trump.jpg",
+                matchesPlayed: 10,
+                wins: 6,
+                winRate: 0.6,
+              }
+            },
+            blue: {
+              hp: 10, score: 12, name: "Joe Biden", llm: "mixtral", cards: [], celebrity: {
+                id: "cmosz852i0000zkjvtee3rztr",
+                name: "Joe Biden",
+                image: "https://abc.deforge.io/biden.jpg",
+                matchesPlayed: 10,
+                wins: 6,
+                winRate: 0.6,
+              }
+            },
+            cardHistory: { pastRounds: [], currentRound: { redCards: [], blueCards: [] } },
+            phase: "AWAITING_ACTION",
+          },
+          serverTimestamp: Date.now(),
         },
         999,
       );
@@ -1116,6 +1149,7 @@ export const fireEventMethods = {
             pastRounds: [],
             currentRound: { redCards: [], blueCards: [] },
           },
+          phase: "AWAITING_ACTION",
         },
         countdown: null,
         serverTimestamp: Date.now(),

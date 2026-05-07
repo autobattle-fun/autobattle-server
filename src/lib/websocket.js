@@ -210,6 +210,7 @@ async function handlePing(socket, message) {
             blueCards: redisState?.blue?.cards || [],
           },
         },
+        phase: redisState?.phase || "AWAITING_INITIAL_DEAL", // Possible values: PENDING, MATCHMAKING, PREPARING, AWAITING_INITIAL_DEAL, P1_TURN, P2_TURN, AWAITING_FINAL_REVEAL_VRF, AWAITING_TIEBREAKER_VRF, ENDED, AWAITING_ACTION
       };
     } else {
       // No active match — check for break countdown

@@ -1133,6 +1133,7 @@ export async function resumeMatch(matchId) {
         blueCards: redisState?.blue?.cards || [],
       },
     },
+    phase: redisState?.phase || "AWAITING_INITIAL_DEAL",
   };
 
   wsEvents.gameResumed(
