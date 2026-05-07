@@ -21,38 +21,47 @@ export class CommentService {
   static async getCommentsByMarket(marketId, userId = null, page = 1, limit = 20) {
     const skip = (page - 1) * limit;
 
-    const comments = await prisma.comment.findMany({
-      where: { marketId },
-      include: {
-        user: {
-          select: {
-            username: true,
+    const [comments, totalCount] = await Promise.all([
+      prisma.comment.findMany({
+        where: { marketId },
+        include: {
+          user: {
+            select: {
+              username: true,
+            },
           },
+          _count: {
+            select: { commentLikes: true },
+          },
+          commentLikes: userId
+            ? {
+                where: { userId },
+                select: { id: true },
+              }
+            : false,
         },
-        _count: {
-          select: { commentLikes: true },
-        },
-        commentLikes: userId
-          ? {
-              where: { userId },
-              select: { id: true },
-            }
-          : false,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      prisma.comment.count({ where: { marketId } }),
+    ]);
+
+    const formattedComments = comments.map((c) => ({
+      ...c,
+      isLiked: userId ? c.commentLikes.length > 0 : false,
+      commentLikes: undefined,
+    }));
+
+    return {
+      comments: formattedComments,
+      pagination: {
+        totalCount,
+        page,
+        limit,
+        hasMore: skip + formattedComments.length < totalCount,
       },
-      orderBy: { createdAt: "desc" },
-      skip,
-      take: limit,
-    });
-
-    if (userId) {
-      return comments.map((c) => ({
-        ...c,
-        isLiked: c.commentLikes.length > 0,
-        commentLikes: undefined,
-      }));
-    }
-
-    return comments;
+    };
   }
 
   static async toggleLike(userId, commentId, liked) {
