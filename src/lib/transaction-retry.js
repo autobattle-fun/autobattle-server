@@ -77,6 +77,7 @@ async function pauseMatchOnError(matchId, label, error) {
     // Emit WebSocket event
     broadcast("game:paused", {
       matchId,
+      serverStatus: "PAUSED",
       reason: `Transaction failed after retries: ${label}`,
       error: error.message,
     }, matchId);

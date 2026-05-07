@@ -444,6 +444,7 @@ export async function playRound(matchId) {
         error: e.message,
         marketId: m.id,
       });
+      throw e;
     }
   }
 
@@ -542,6 +543,7 @@ export async function playRound(matchId) {
           error: e.message,
           marketId: m.id,
         });
+        throw e;
       }
     }
 
@@ -1023,6 +1025,7 @@ async function syncMatchState(match, gs) {
           error: e.message,
           marketId: m.id,
         });
+        throw e;
       }
     }
 
