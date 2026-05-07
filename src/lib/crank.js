@@ -177,6 +177,8 @@ async function maybeAutoStartMatch() {
           // Preparing expired → switch to ACTIVE
           await prisma.match.update({ where: { id: existingMatch.id }, data: { status: "ACTIVE" } });
           logger.info("Preparing phase expired — Match is now ACTIVE", { matchId: existingMatch.id });
+          const { wsEvents } = await import("./websocket.js");
+          wsEvents.logBroadcast("system", "Preparation phase expired — Match is now LIVE", existingMatch.id);
           await clearMatchBreakCountdown();
         }
       }

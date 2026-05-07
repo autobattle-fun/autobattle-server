@@ -150,6 +150,8 @@ export async function startMatch() {
     return { match, mainMarket, round1Market };
   });
 
+  wsEvents.logBroadcast("system", `Match initialized. Awaiting Phase 1...`, result.match.id);
+
   // Set PREPARING countdown — the match exists but isn't active yet
   const preparingEndUnix =
     Math.floor(Date.now() / 1000) + env.PREPARATION_PHASE_SECONDS;
@@ -245,6 +247,7 @@ export async function playRound(matchId) {
     matchId,
   );
   await addMatchLog(gameId, "System", `Round ${match.roundNumber} started`);
+  wsEvents.logBroadcast("system", `Round ${match.roundNumber} started`, matchId);
 
   if (match.status === "MATCHMAKING") {
     await prisma.match.update({
@@ -297,11 +300,13 @@ export async function playRound(matchId) {
     }
   }
 
+  wsEvents.logBroadcast("system", "VRF Request: Initial cards", matchId);
   await withRetry(() => solanaService.vrfStep(gameId, ROLL_TYPE.INITIAL_DEAL), {
     label: "vrfStep:INITIAL_DEAL",
     matchId,
     gameId,
   });
+  wsEvents.logBroadcast("system", "VRF Reveal: Cards dealt", matchId);
   gs = await solanaService.fetchGameState(gameId);
 
   let state = await getGameState(gameId);
@@ -365,11 +370,13 @@ export async function playRound(matchId) {
   const preRiverRedAces = gs.p1Aces;
   const preRiverBlueAces = gs.p2Aces;
 
+  wsEvents.logBroadcast("system", "VRF Request: River reveal", matchId);
   await withRetry(() => solanaService.vrfStep(gameId, ROLL_TYPE.FINAL_REVEAL), {
     label: "vrfStep:FINAL_REVEAL",
     matchId,
     gameId,
   });
+  wsEvents.logBroadcast("system", "VRF Reveal: River cards revealed", matchId);
   gs = await solanaService.fetchGameState(gameId);
 
   const riverRedCard = inferCard(
@@ -469,11 +476,13 @@ export async function playRound(matchId) {
     const preTbRedAces = gs.p1Aces;
     const preTbBlueAces = gs.p2Aces;
 
+    wsEvents.logBroadcast("system", "VRF Request: Tiebreaker draw", matchId);
     await withRetry(() => solanaService.vrfStep(gameId, ROLL_TYPE.TIEBREAKER), {
       label: "vrfStep:TIEBREAKER",
       matchId,
       gameId,
     });
+    wsEvents.logBroadcast("system", "VRF Reveal: Tiebreaker cards dealt", matchId);
     gs = await solanaService.fetchGameState(gameId);
 
     const tbRedCard = inferCard(
@@ -642,6 +651,7 @@ export async function playRound(matchId) {
     "System",
     `Round ${match.roundNumber} resolved — Winner: ${roundWinner || "TIE"}, Damage: ${damageDealt}`,
   );
+  wsEvents.logBroadcast("system", `Round ${match.roundNumber} resolved. Winner: ${roundWinner || "TIE"}`, matchId);
 
   if (updatedMatch.status === "RESOLVED") {
     wsEvents.matchEnded(
@@ -659,7 +669,7 @@ export async function playRound(matchId) {
       `Match ended — Winner: ${updatedMatch.winner}`,
     );
     wsEvents.logBroadcast(
-      "System",
+      "system",
       `Match #${gameId} ended — Winner: ${updatedMatch.winner}`,
     );
     await deleteGameState(gameId);
@@ -721,6 +731,20 @@ async function runSingleAgentTurn(gameId, player, match) {
   let state = await getGameState(gameId);
   let gs = await solanaService.fetchGameState(gameId);
 
+  // Auto-heal missing cards (if a transaction succeeded on-chain but we crashed before saving to Redis)
+  if (gs.p1Score > state.red.score) {
+    const card = inferCard(state.red.score, gs.p1Score, state.red.aces, gs.p1Aces, gs.p1LastCard);
+    await recordCardDealt(gameId, "RED", card);
+    await syncOnChainState(gameId, gs, parseGamePhase(gs.phase));
+    state = await getGameState(gameId);
+  }
+  if (gs.p2Score > state.blue.score) {
+    const card = inferCard(state.blue.score, gs.p2Score, state.blue.aces, gs.p2Aces, gs.p2LastCard);
+    await recordCardDealt(gameId, "BLUE", card);
+    await syncOnChainState(gameId, gs, parseGamePhase(gs.phase));
+    state = await getGameState(gameId);
+  }
+
   let myScore = isRed ? gs.p1Score : gs.p2Score;
   let oppScore = isRed ? gs.p2Score : gs.p1Score;
   let myStayed = isRed ? gs.p1Stayed : gs.p2Stayed;
@@ -731,8 +755,9 @@ async function runSingleAgentTurn(gameId, player, match) {
 
   if (myStayed) {
     // Auto-heal Redis if it fell out of sync due to an RPC timeout
+    const freshState = await getGameState(gameId);
     await updateGameState(gameId, {
-      [player.toLowerCase()]: { ...state[player.toLowerCase()], stayed: true },
+      [player.toLowerCase()]: { ...freshState[player.toLowerCase()], stayed: true },
     });
     return;
   }
@@ -766,6 +791,9 @@ async function runSingleAgentTurn(gameId, player, match) {
       cardHistory,
     });
 
+    wsEvents.logBroadcast(player.toLowerCase(), reason, match.id);
+    wsEvents.logBroadcast("system", `Agent ${player} chose to ${action}`, match.id);
+
     state = await updateGameState(gameId, {
       playerStatus: {
         ...state.playerStatus,
@@ -777,19 +805,22 @@ async function runSingleAgentTurn(gameId, player, match) {
     if (action === "HIT") {
       let txSig;
       try {
+        wsEvents.logBroadcast("system", `VRF Request: Agent ${player} Hit`, match.id);
         txSig = await withRetry(
           () => solanaService.vrfStep(gameId, ROLL_TYPE.HIT, player),
           { label: `vrfStep:HIT:${player}`, matchId: match.id, gameId },
         );
+        wsEvents.logBroadcast("system", `VRF Reveal: Agent ${player} Hit complete`, match.id);
       } catch (hitError) {
         if (hitError.message && hitError.message.includes("AlreadyStayed")) {
           logger.warn("Agent tried to HIT after staying — forced STAY", {
             gameId,
             player,
           });
+          const freshState = await getGameState(gameId);
           await updateGameState(gameId, {
             [isRed ? "red" : "blue"]: {
-              ...state[isRed ? "red" : "blue"],
+              ...freshState[isRed ? "red" : "blue"],
               stayed: true,
             },
           });
@@ -808,9 +839,10 @@ async function runSingleAgentTurn(gameId, player, match) {
       const contractStayed = isRed ? updated.p1Stayed : updated.p2Stayed;
 
       if (contractStayed) {
+        const freshState = await getGameState(gameId);
         state = await updateGameState(gameId, {
           [isRed ? "red" : "blue"]: {
-            ...state[isRed ? "red" : "blue"],
+            ...freshState[isRed ? "red" : "blue"],
             stayed: true,
           },
         });
@@ -910,13 +942,14 @@ async function runSingleAgentTurn(gameId, player, match) {
         gameId,
       });
 
+      const freshState = await getGameState(gameId);
       state = await updateGameState(gameId, {
         [isRed ? "red" : "blue"]: {
-          ...state[isRed ? "red" : "blue"],
+          ...freshState[isRed ? "red" : "blue"],
           stayed: true,
         },
         playerStatus: {
-          ...state.playerStatus,
+          ...freshState.playerStatus,
           [player.toLowerCase()]: "FINALIZED",
         },
       });
@@ -1083,6 +1116,7 @@ export async function pauseMatch(matchId, reason = "Manual pause") {
     matchId,
   );
   logger.info("Match manually paused", { matchId, reason });
+  wsEvents.logBroadcast("system", `Match paused: ${reason}`, matchId);
   return updated;
 }
 
@@ -1109,6 +1143,8 @@ export async function resumeMatch(matchId) {
     where: { id: matchId },
     data: { status: "ACTIVE" },
   });
+
+  wsEvents.logBroadcast("system", "Match resumed", matchId);
 
   const redisState = await getGameState(match.gameId);
   const logs = await getRoundSystemLogs(matchId);
