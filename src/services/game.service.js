@@ -1061,7 +1061,10 @@ export async function pauseMatch(matchId, reason = "Manual pause") {
  * Resume a paused match.
  */
 export async function resumeMatch(matchId) {
-  const match = await prisma.match.findUnique({ where: { id: matchId } });
+  const match = await prisma.match.findUnique({
+    where: { id: matchId },
+    include: { redCeleb: true, blueCeleb: true },
+  });
   if (!match) {
     const e = new Error("Match not found");
     e.statusCode = 404;
@@ -1078,7 +1081,72 @@ export async function resumeMatch(matchId) {
     data: { status: "ACTIVE" },
   });
 
-  wsEvents.gameResumed({ gameId: match.gameId }, matchId);
+  const redisState = await getGameState(match.gameId);
+  const logs = await getRoundSystemLogs(matchId);
+
+  const { getCurrentMarketPrices } = await import("../lib/price-stream.js");
+  const currentMarketPrices = getCurrentMarketPrices(matchId);
+  const market =
+    Object.keys(currentMarketPrices).length > 0 ? currentMarketPrices : null;
+
+  const activePlayerColor = redisState?.activePlayer || "RED";
+  const activePlayerName =
+    activePlayerColor === "RED" ? match.redName : match.blueName;
+
+  const gameState = {
+    gameId: match.gameId,
+    matchId: match.id,
+    gameStatus: updated.status,
+    serverStatus: "ACTIVE",
+    activePlayer: { color: activePlayerColor, name: activePlayerName },
+    playerStatus: redisState?.playerStatus || {
+      red: "WAITING",
+      blue: "WAITING",
+    },
+    roundNumber: match.roundNumber,
+    redHp: match.redHp,
+    blueHp: match.blueHp,
+    red: {
+      hp: match.redHp,
+      name: match.redName,
+      llm: match.llmRed,
+      score: redisState?.red?.score || 0,
+      stayed: redisState?.red?.stayed || false,
+      cards: redisState?.red?.cards || [],
+      celebrity: match.redCeleb,
+    },
+    blue: {
+      hp: match.blueHp,
+      name: match.blueName,
+      llm: match.llmBlue,
+      score: redisState?.blue?.score || 0,
+      stayed: redisState?.blue?.stayed || false,
+      cards: redisState?.blue?.cards || [],
+      celebrity: match.blueCeleb,
+    },
+    river: { red: redisState?.riverRed, blue: redisState?.riverBlue },
+    tiebreakerCards: redisState?.tiebreakerCards || [],
+    cardHistory: {
+      pastRounds: redisState?.pastRounds || [],
+      currentRound: {
+        redCards: redisState?.red?.cards || [],
+        blueCards: redisState?.blue?.cards || [],
+      },
+    },
+  };
+
+  wsEvents.gameResumed(
+    {
+      gameId: match.gameId,
+      serverStatus: "RESUMED",
+      gameState,
+      market,
+      logs,
+      countdown: null,
+      serverTimestamp: Date.now(),
+    },
+    matchId,
+  );
   logger.info("Match resumed", { matchId });
   return updated;
 }
