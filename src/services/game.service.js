@@ -150,7 +150,11 @@ export async function startMatch() {
     return { match, mainMarket, round1Market };
   });
 
-  wsEvents.logBroadcast("system", `Match initialized. Awaiting Phase 1...`, result.match.id);
+  wsEvents.logBroadcast(
+    "system",
+    `Match initialized. Awaiting Phase 1...`,
+    result.match.id,
+  );
 
   // Set PREPARING countdown — the match exists but isn't active yet
   const preparingEndUnix =
@@ -254,10 +258,10 @@ export async function startMatch() {
 export async function playRound(matchId) {
   const match = await prisma.match.findUnique({
     where: { id: matchId },
-    include: { 
+    include: {
       markets: { where: { marketIndex: 0 } },
       redCeleb: true,
-      blueCeleb: true
+      blueCeleb: true,
     },
   });
   if (!match) {
@@ -289,7 +293,11 @@ export async function playRound(matchId) {
     matchId,
   );
   await addMatchLog(gameId, "System", `Round ${match.roundNumber} started`);
-  wsEvents.logBroadcast("system", `Round ${match.roundNumber} started`, matchId);
+  wsEvents.logBroadcast(
+    "system",
+    `Round ${match.roundNumber} started`,
+    matchId,
+  );
 
   if (match.status === "MATCHMAKING") {
     await prisma.match.update({
@@ -524,7 +532,11 @@ export async function playRound(matchId) {
       matchId,
       gameId,
     });
-    wsEvents.logBroadcast("system", "VRF Reveal: Tiebreaker cards dealt", matchId);
+    wsEvents.logBroadcast(
+      "system",
+      "VRF Reveal: Tiebreaker cards dealt",
+      matchId,
+    );
     gs = await solanaService.fetchGameState(gameId);
 
     const tbRedCard = inferCard(
@@ -693,7 +705,11 @@ export async function playRound(matchId) {
     "System",
     `Round ${match.roundNumber} resolved — Winner: ${roundWinner || "TIE"}, Damage: ${damageDealt}`,
   );
-  wsEvents.logBroadcast("system", `Round ${match.roundNumber} resolved. Winner: ${roundWinner || "TIE"}`, matchId);
+  wsEvents.logBroadcast(
+    "system",
+    `Round ${match.roundNumber} resolved. Winner: ${roundWinner || "TIE"}`,
+    matchId,
+  );
 
   if (updatedMatch.status === "RESOLVED") {
     wsEvents.matchEnded(
@@ -775,13 +791,25 @@ async function runSingleAgentTurn(gameId, player, match) {
 
   // Auto-heal missing cards (if a transaction succeeded on-chain but we crashed before saving to Redis)
   if (gs.p1Score > state.red.score) {
-    const card = inferCard(state.red.score, gs.p1Score, state.red.aces, gs.p1Aces, gs.p1LastCard);
+    const card = inferCard(
+      state.red.score,
+      gs.p1Score,
+      state.red.aces,
+      gs.p1Aces,
+      gs.p1LastCard,
+    );
     await recordCardDealt(gameId, "RED", card);
     await syncOnChainState(gameId, gs, parseGamePhase(gs.phase));
     state = await getGameState(gameId);
   }
   if (gs.p2Score > state.blue.score) {
-    const card = inferCard(state.blue.score, gs.p2Score, state.blue.aces, gs.p2Aces, gs.p2LastCard);
+    const card = inferCard(
+      state.blue.score,
+      gs.p2Score,
+      state.blue.aces,
+      gs.p2Aces,
+      gs.p2LastCard,
+    );
     await recordCardDealt(gameId, "BLUE", card);
     await syncOnChainState(gameId, gs, parseGamePhase(gs.phase));
     state = await getGameState(gameId);
@@ -799,7 +827,10 @@ async function runSingleAgentTurn(gameId, player, match) {
     // Auto-heal Redis if it fell out of sync due to an RPC timeout
     const freshState = await getGameState(gameId);
     await updateGameState(gameId, {
-      [player.toLowerCase()]: { ...freshState[player.toLowerCase()], stayed: true },
+      [player.toLowerCase()]: {
+        ...freshState[player.toLowerCase()],
+        stayed: true,
+      },
     });
     return;
   }
@@ -834,7 +865,11 @@ async function runSingleAgentTurn(gameId, player, match) {
     });
 
     wsEvents.logBroadcast(player.toLowerCase(), reason, match.id);
-    wsEvents.logBroadcast("system", `Agent ${player} chose to ${action}`, match.id);
+    wsEvents.logBroadcast(
+      "system",
+      `Agent ${player} chose to ${action}`,
+      match.id,
+    );
 
     state = await updateGameState(gameId, {
       playerStatus: {
@@ -847,12 +882,20 @@ async function runSingleAgentTurn(gameId, player, match) {
     if (action === "HIT") {
       let txSig;
       try {
-        wsEvents.logBroadcast("system", `VRF Request: Agent ${player} Hit`, match.id);
+        wsEvents.logBroadcast(
+          "system",
+          `VRF Request: Agent ${player} Hit`,
+          match.id,
+        );
         txSig = await withRetry(
           () => solanaService.vrfStep(gameId, ROLL_TYPE.HIT, player),
           { label: `vrfStep:HIT:${player}`, matchId: match.id, gameId },
         );
-        wsEvents.logBroadcast("system", `VRF Reveal: Agent ${player} Hit complete`, match.id);
+        wsEvents.logBroadcast(
+          "system",
+          `VRF Reveal: Agent ${player} Hit complete`,
+          match.id,
+        );
       } catch (hitError) {
         if (hitError.message && hitError.message.includes("AlreadyStayed")) {
           logger.warn("Agent tried to HIT after staying — forced STAY", {
@@ -1060,7 +1103,7 @@ async function syncMatchState(match, gs) {
     include: {
       redCeleb: true,
       blueCeleb: true,
-    }
+    },
   });
 
   if (isEnded) {
@@ -1085,23 +1128,34 @@ async function syncMatchState(match, gs) {
       if (updatedMatch.redCelebId && updatedMatch.blueCelebId) {
         const redWon = winner === "RED";
         const blueWon = winner === "BLUE";
-        
+
         const redCelebMatches = (updatedMatch.redCeleb?.matchesPlayed || 0) + 1;
-        const redCelebWins = (updatedMatch.redCeleb?.wins || 0) + (redWon ? 1 : 0);
+        const redCelebWins =
+          (updatedMatch.redCeleb?.wins || 0) + (redWon ? 1 : 0);
         const redCelebWinRate = redCelebWins / redCelebMatches;
 
-        const blueCelebMatches = (updatedMatch.blueCeleb?.matchesPlayed || 0) + 1;
-        const blueCelebWins = (updatedMatch.blueCeleb?.wins || 0) + (blueWon ? 1 : 0);
+        const blueCelebMatches =
+          (updatedMatch.blueCeleb?.matchesPlayed || 0) + 1;
+        const blueCelebWins =
+          (updatedMatch.blueCeleb?.wins || 0) + (blueWon ? 1 : 0);
         const blueCelebWinRate = blueCelebWins / blueCelebMatches;
 
         await tx.celebrity.update({
           where: { id: updatedMatch.redCelebId },
-          data: { matchesPlayed: redCelebMatches, wins: redCelebWins, winRate: redCelebWinRate }
+          data: {
+            matchesPlayed: redCelebMatches,
+            wins: redCelebWins,
+            winRate: redCelebWinRate,
+          },
         });
 
         await tx.celebrity.update({
           where: { id: updatedMatch.blueCelebId },
-          data: { matchesPlayed: blueCelebMatches, wins: blueCelebWins, winRate: blueCelebWinRate }
+          data: {
+            matchesPlayed: blueCelebMatches,
+            wins: blueCelebWins,
+            winRate: blueCelebWinRate,
+          },
         });
       }
     });
@@ -1418,6 +1472,13 @@ export async function getMatchByGameId(gameId) {
 
   const match = await prisma.match.findUnique({
     where: { gameId },
+    include: {
+      markets: true,
+      rounds: {
+        include: { moves: true },
+        orderBy: { roundNumber: "asc" },
+      },
+    },
   });
 
   if (!match) return null;
@@ -1454,9 +1515,8 @@ export async function listMatches({ status, page = 1, limit = 20 } = {}) {
     prisma.match.findMany({
       where,
       include: {
-        markets: {
-          where: { marketType: "MAIN" },
-          select: { id: true, slug: true, status: true, title: true },
+        _count: {
+          select: { rounds: true },
         },
       },
       orderBy: { createdAt: "desc" },
