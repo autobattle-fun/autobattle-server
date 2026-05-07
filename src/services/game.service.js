@@ -37,6 +37,7 @@ import {
   parseColor,
 } from "../utils/solana.helpers.js";
 import { redis } from "../db/redis.js";
+import { getCurrentMarketPrices } from "../lib/price-stream.js";
 
 import { getCelebrities } from "./celebrity.service.js";
 
@@ -155,6 +156,9 @@ export async function startMatch() {
   await setMatchBreakCountdown(preparingEndUnix, "PREPARING");
 
   await initGameState({ gameId, matchId: result.match.id, matchUuid });
+  const currentPrices = getCurrentMarketPrices(result.match.id);
+  const market = Object.keys(currentPrices).length > 0 ? currentPrices : null;
+
   wsEvents.matchCreated(
     {
       game: {
@@ -182,6 +186,7 @@ export async function startMatch() {
           image: blueImage,
         },
       },
+      market,
     },
     gameId,
   );
@@ -309,6 +314,9 @@ export async function playRound(matchId) {
   const blueScoreInit = gs.p2Score;
 
   state = await getGameState(gameId);
+  const currentPrices = getCurrentMarketPrices(matchId);
+  const market = Object.keys(currentPrices).length > 0 ? currentPrices : null;
+
   wsEvents.cardsDealt(
     {
       game: {
@@ -327,6 +335,7 @@ export async function playRound(matchId) {
         red: buildPlayerState(gs, state, match, "RED"),
         blue: buildPlayerState(gs, state, match, "BLUE"),
       },
+      market,
     },
     matchId,
   );
