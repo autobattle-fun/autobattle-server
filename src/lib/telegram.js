@@ -101,19 +101,20 @@ export async function notifyEvent(eventType, data, matchId) {
   if (!isEnabled()) return;
 
   const emoji = EVENT_EMOJI[eventType] || "📡";
+  const escapedMatchId = matchId ? escapeHTML(matchId) : null;
   let message = `${emoji} <b>${eventType.toUpperCase()}</b>\n`;
 
-  if (matchId) {
-    message += `Match: <code>${matchId}</code>\n`;
+  if (escapedMatchId) {
+    message += `Match: <code>${escapedMatchId}</code>\n`;
   }
 
   // Format event-specific data
   switch (eventType) {
     case "match:created": {
       const g = data.game || data;
-      message += `Game #${g.gameId}\n`;
-      message += `🔴 ${g.red?.name || "Red"} (${g.red?.llm || g.llmRed})\n`;
-      message += `🔵 ${g.blue?.name || "Blue"} (${g.blue?.llm || g.llmBlue})`;
+      message += `Game #${escapeHTML(g.gameId)}\n`;
+      message += `🔴 ${escapeHTML(g.red?.name || "Red")} (${escapeHTML(g.red?.llm || g.llmRed)})\n`;
+      message += `🔵 ${escapeHTML(g.blue?.name || "Blue")} (${escapeHTML(g.blue?.llm || g.llmBlue)})`;
       break;
     }
 
@@ -144,8 +145,8 @@ export async function notifyEvent(eventType, data, matchId) {
 
     case "game:paused":
       message += `⚠️ <b>MATCH PAUSED</b>\n`;
-      message += `Reason: ${data.reason}\n`;
-      if (data.error) message += `Error: <code>${data.error}</code>`;
+      message += `Reason: ${escapeHTML(data.reason)}\n`;
+      if (data.error) message += `Error: <code>${escapeHTML(data.error)}</code>`;
       break;
 
     case "game:resumed":
@@ -157,7 +158,7 @@ export async function notifyEvent(eventType, data, matchId) {
       break;
 
     case "log:broadcast":
-      message += `[${data.role || "System"}] ${data.log || data.message}`;
+      message += `[${escapeHTML(data.role || "System")}] ${escapeHTML(data.log || data.message)}`;
       break;
 
     default:
@@ -175,11 +176,15 @@ export async function notifyEvent(eventType, data, matchId) {
 export async function notifyError(context, error) {
   if (!isEnabled()) return;
 
+  const safeContext = escapeHTML(context);
+  const safeError = escapeHTML(error.message || String(error));
+  const safeStack = escapeHTML((error.stack || "").slice(0, 500));
+
   const message =
     `🚨 <b>CRITICAL ERROR</b>\n\n` +
-    `Context: ${context}\n` +
-    `Error: <code>${error.message || String(error)}</code>\n` +
-    `Stack: <code>${(error.stack || "").slice(0, 500)}</code>\n\n` +
+    `Context: ${safeContext}\n` +
+    `Error: <code>${safeError}</code>\n` +
+    `Stack: <code>${safeStack}</code>\n\n` +
     `⏸️ Match has been PAUSED. Use /resume to continue.`;
 
   await sendNotification(message);
@@ -335,7 +340,7 @@ async function handleUpdate(update) {
 // ── Command Handlers ────────────────────────────────────────────────
 
 async function handleStartCommand(chatId, from) {
-  const name = from?.first_name || "User";
+  const name = escapeHTML(from?.first_name || "User");
   await sendMessage(
     chatId,
     `👋 Welcome, ${name}!\n\n` +
@@ -371,10 +376,10 @@ async function handleStatusCommand(chatId) {
 
   await sendMessage(
     chatId,
-    `${statusEmoji} <b>Match #${activeMatch.gameId}</b> — ${activeMatch.status}\n\n` +
+    `${statusEmoji} <b>Match #${escapeHTML(activeMatch.gameId)}</b> — ${escapeHTML(activeMatch.status)}\n\n` +
     `Round: ${activeMatch.roundNumber}\n` +
     `❤️ Red: ${activeMatch.redHp} HP | 💙 Blue: ${activeMatch.blueHp} HP\n` +
-    `🔴 ${activeMatch.llmRed}\n🔵 ${activeMatch.llmBlue}`,
+    `🔴 ${escapeHTML(activeMatch.llmRed)}\n🔵 ${escapeHTML(activeMatch.llmBlue)}`,
   );
 }
 
@@ -471,15 +476,27 @@ async function handleHelpCommand(chatId) {
 // ── Helpers ─────────────────────────────────────────────────────────
 
 function formatDataCompact(data) {
-  if (!data || typeof data !== "object") return String(data);
+  if (!data || typeof data !== "object") return escapeHTML(String(data));
 
   return Object.entries(data)
     .filter(([, v]) => v !== null && v !== undefined)
     .map(([k, v]) => {
-      if (typeof v === "object") return `${k}: ${JSON.stringify(v, null, 2)}`;
-      return `${k}: ${v}`;
+      const val = typeof v === "object" ? JSON.stringify(v, null, 2) : String(v);
+      return `${escapeHTML(k)}: ${escapeHTML(val)}`;
     })
     .join("\n");
+}
+
+/**
+ * Escapes HTML special characters for Telegram HTML parse_mode.
+ */
+function escapeHTML(str) {
+  if (typeof str !== "string") return str;
+  return str.replace(/[&<>]/g, (tag) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+  }[tag] || tag));
 }
 
 function sleep(ms) {

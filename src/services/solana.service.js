@@ -439,7 +439,37 @@ class SolanaService {
     // Instantiate the randomness object using the pubkey we either created or recovered
     const randomness = new sb.Randomness(this._sbProgram, rngPubkey);
 
-    const revealIx = await randomness.revealIx();
+    let revealIx;
+    try {
+      revealIx = await randomness.revealIx();
+    } catch (error) {
+      if (error.isAxiosError || error.name === 'AxiosError') {
+        try {
+          const data = await randomness.loadData();
+          const oracle = new sb.Oracle(this._sbProgram, data.oracle);
+          const oracleData = await oracle.loadData();
+          const gatewayUrl = String.fromCharCode(...oracleData.gatewayUri).replace(/\0+$/, "");
+
+          const errorDetails = {
+            randomnessAccount: rngPubkey.toBase58(),
+            seedSlot: data.seedSlot.toNumber(),
+            oraclePubkey: data.oracle.toBase58(),
+            gatewayUrl,
+            status: error.response?.status,
+            responseBody: error.response?.data,
+            configUrl: error.config?.url,
+            timestamp: new Date().toISOString()
+          };
+
+          logger.error("Switchboard VRF Reveal Error details", errorDetails);
+          error.message = `Switchboard VRF Reveal Error: ${error.message}\nDetails: ${JSON.stringify(errorDetails, null, 2)}`;
+        } catch (innerErr) {
+          logger.error("Failed to load Switchboard metadata for error decoration", { err: innerErr.message });
+        }
+      }
+      throw error;
+    }
+
     const fillIx = await this.gameEngine.methods
       .fulfillVrf()
       .accounts({
