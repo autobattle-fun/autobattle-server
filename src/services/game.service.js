@@ -192,9 +192,51 @@ export async function startMatch() {
     },
     gameId,
   );
-  wsEvents.breakPreparing({
-    nextMatchAt: new Date(preparingEndUnix * 1000).toISOString(),
-  });
+  wsEvents.breakPreparing(
+    {
+      nextMatchAt: new Date(preparingEndUnix * 1000).toISOString(),
+      gameState: {
+        gameId,
+        matchId: result.match.id,
+        gameStatus: "MATCHMAKING",
+        serverStatus: "ACTIVE",
+        activePlayer: { color: "RED", name: redName },
+        playerStatus: { red: "WAITING", blue: "WAITING" },
+        roundNumber: 1,
+        redHp: 10,
+        blueHp: 10,
+        red: {
+          hp: 10,
+          name: redName,
+          llm: redModel,
+          score: 0,
+          stayed: false,
+          cards: [],
+          celebrity: redCeleb,
+        },
+        blue: {
+          hp: 10,
+          name: blueName,
+          llm: blueModel,
+          score: 0,
+          stayed: false,
+          cards: [],
+          celebrity: blueCeleb,
+        },
+        river: { red: null, blue: null },
+        tiebreakerCards: [],
+        cardHistory: {
+          pastRounds: [],
+          currentRound: {
+            redCards: [],
+            blueCards: [],
+          },
+        },
+        phase: "PREPARING",
+      },
+    },
+    result.match.id,
+  );
   await addMatchLog(
     gameId,
     "System",

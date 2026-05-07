@@ -427,8 +427,8 @@ export const wsEvents = {
     broadcast("game:resumed", payload, matchId);
   },
 
-  breakPreparing({ nextMatchAt }) {
-    broadcast("break:preparing", { nextMatchAt });
+  breakPreparing(payload, matchId) {
+    broadcast("break:preparing", payload, matchId);
   },
 
   marketPrices(matchId, prices) {
