@@ -685,6 +685,19 @@ async function runAgentTurns(gameId, initialGs, match) {
   let state = await getGameState(gameId);
 
   while (!state.red.stayed || !state.blue.stayed) {
+    // Bail out if match was paused (e.g. by a failed withRetry in a concurrent path)
+    const currentMatch = await prisma.match.findUnique({
+      where: { id: match.id },
+      select: { status: true },
+    });
+    if (currentMatch?.status === "PAUSED") {
+      logger.warn("Match paused during agent turns — aborting", {
+        gameId,
+        matchId: match.id,
+      });
+      return;
+    }
+
     if (currentPlayer === "RED") {
       if (!state.red.stayed) {
         await runSingleAgentTurn(gameId, "RED", match);

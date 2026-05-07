@@ -8,7 +8,7 @@ import { getMatchBreakCountdown, clearMatchBreakCountdown } from "./game-state-s
 // ── Distributed Lock ────────────────────────────────────────────────
 
 const CRANK_LOCK_KEY = "autobattle:crank:active_lock";
-const CRANK_LOCK_TTL = 120; // seconds — max time a single crank cycle can hold the lock
+const CRANK_LOCK_TTL = 600; // seconds — max time a single crank cycle can hold the lock
 
 /**
  * Acquire a distributed lock via Redis SET NX EX.
@@ -56,7 +56,11 @@ export function startCrankEngine() {
 
   logger.info("Crank engine STARTED", { intervalMs });
 
-  intervalHandle = setInterval(async () => {
+  // Use recursive setTimeout instead of setInterval to guarantee
+  // the next cycle only starts after the previous one completes.
+  // setInterval can overlap when crankCycle takes longer than intervalMs.
+  async function scheduleNext() {
+    if (!isRunning) return;
     try {
       await crankCycle();
     } catch (error) {
@@ -65,18 +69,23 @@ export function startCrankEngine() {
         stack: error?.stack,
       });
     }
-  }, intervalMs);
+    if (isRunning) {
+      intervalHandle = setTimeout(scheduleNext, intervalMs);
+    }
+  }
+
+  intervalHandle = setTimeout(scheduleNext, intervalMs);
 }
 
 /**
  * Stop the crank engine gracefully.
  */
 export function stopCrankEngine() {
+  isRunning = false;
   if (intervalHandle) {
-    clearInterval(intervalHandle);
+    clearTimeout(intervalHandle);
     intervalHandle = null;
   }
-  isRunning = false;
   logger.info("Crank engine STOPPED");
 }
 
