@@ -20,6 +20,7 @@ import {
   deleteGameState,
   inferCard,
   formatCardHistory,
+  calculateScoreFromCards,
   setMatchBreakCountdown,
   clearMatchBreakCountdown,
   addMatchLog,
@@ -363,10 +364,17 @@ export async function playRound(matchId) {
   if (!state) state = await initGameState({ gameId, matchId, matchUuid });
 
   // Infer initial cards from scores (each player gets 1 card)
+  const { score: redCalcScoreInit } = calculateScoreFromCards(state.red.cards);
   const redInitCard = inferCard(0, gs.p1Score, 0, gs.p1Aces);
+  if (redCalcScoreInit === 0 && gs.p1Score > 0) {
+    await recordCardDealt(gameId, "RED", redInitCard);
+  }
+
+  const { score: blueCalcScoreInit } = calculateScoreFromCards(state.blue.cards);
   const blueInitCard = inferCard(0, gs.p2Score, 0, gs.p2Aces);
-  await recordCardDealt(gameId, "RED", redInitCard);
-  await recordCardDealt(gameId, "BLUE", blueInitCard);
+  if (blueCalcScoreInit === 0 && gs.p2Score > 0) {
+    await recordCardDealt(gameId, "BLUE", blueInitCard);
+  }
   await syncOnChainState(gameId, gs, parseGamePhase(gs.phase));
 
   const redScoreInit = gs.p1Score;
@@ -790,11 +798,13 @@ async function runSingleAgentTurn(gameId, player, match) {
   let gs = await solanaService.fetchGameState(gameId);
 
   // Auto-heal missing cards (if a transaction succeeded on-chain but we crashed before saving to Redis)
-  if (gs.p1Score > state.red.score) {
+  const { score: redCalcScore, aces: redCalcAces } = calculateScoreFromCards(state.red.cards);
+  if (gs.p1Score > redCalcScore) {
+    logger.info("Auto-healing RED cards", { gameId, chainScore: gs.p1Score, calcScore: redCalcScore });
     const card = inferCard(
-      state.red.score,
+      redCalcScore,
       gs.p1Score,
-      state.red.aces,
+      redCalcAces,
       gs.p1Aces,
       gs.p1LastCard,
     );
@@ -802,11 +812,14 @@ async function runSingleAgentTurn(gameId, player, match) {
     await syncOnChainState(gameId, gs, parseGamePhase(gs.phase));
     state = await getGameState(gameId);
   }
-  if (gs.p2Score > state.blue.score) {
+
+  const { score: blueCalcScore, aces: blueCalcAces } = calculateScoreFromCards(state.blue.cards);
+  if (gs.p2Score > blueCalcScore) {
+    logger.info("Auto-healing BLUE cards", { gameId, chainScore: gs.p2Score, calcScore: blueCalcScore });
     const card = inferCard(
-      state.blue.score,
+      blueCalcScore,
       gs.p2Score,
-      state.blue.aces,
+      blueCalcAces,
       gs.p2Aces,
       gs.p2LastCard,
     );
@@ -842,6 +855,9 @@ async function runSingleAgentTurn(gameId, player, match) {
         [player.toLowerCase()]: "THINKING",
       },
     });
+
+    wsEvents.logBroadcast(player.toLowerCase(), "Thinking...", match.id);
+
     const myCards = isRed ? state?.red?.cards : state?.blue?.cards;
     const oppCards = isRed ? state?.blue?.cards : state?.red?.cards;
     const cardHistory = state ? formatCardHistory(state) : "";
@@ -982,8 +998,8 @@ async function runSingleAgentTurn(gameId, player, match) {
           },
           ...(myStayed || newScore !== scoreBefore
             ? {
-              red: buildPlayerState(updated, state, match, "RED"),
-              blue: buildPlayerState(updated, state, match, "BLUE"),
+              red: buildPlayerState(updated, state, match, "RED", player, reason),
+              blue: buildPlayerState(updated, state, match, "BLUE", player, reason),
             }
             : {}),
         },
@@ -1012,8 +1028,8 @@ async function runSingleAgentTurn(gameId, player, match) {
               red: "WAITING",
               blue: "WAITING",
             },
-            red: buildPlayerState(updated, state, match, "RED"),
-            blue: buildPlayerState(updated, state, match, "BLUE"),
+            red: buildPlayerState(updated, state, match, "RED", player, "Score >= 21, forced by contract"),
+            blue: buildPlayerState(updated, state, match, "BLUE", player, "Score >= 21, forced by contract"),
           },
           match.id,
         );
@@ -1060,8 +1076,8 @@ async function runSingleAgentTurn(gameId, player, match) {
             red: "WAITING",
             blue: "WAITING",
           },
-          red: buildPlayerState(latestGs, state, match, "RED"),
-          blue: buildPlayerState(latestGs, state, match, "BLUE"),
+          red: buildPlayerState(latestGs, state, match, "RED", player, reason),
+          blue: buildPlayerState(latestGs, state, match, "BLUE", player, reason),
         },
         match.id,
       );
@@ -1574,7 +1590,7 @@ function serializeGameState(gs) {
  * Build a player state object for WS event payloads.
  * Matches the shape used in test.controller.js fire methods.
  */
-function buildPlayerState(gs, redisState, match, color) {
+function buildPlayerState(gs, redisState, match, color, activePlayerColor = null, activeReason = null) {
   const isRed = color === "RED";
   return {
     hp: isRed ? gs.p1Hp : gs.p2Hp,
@@ -1582,6 +1598,7 @@ function buildPlayerState(gs, redisState, match, color) {
     name: isRed ? match.redName : match.blueName,
     llm: isRed ? match.llmRed : match.llmBlue,
     cards: isRed ? redisState?.red?.cards || [] : redisState?.blue?.cards || [],
+    reason: color === activePlayerColor ? activeReason : null,
     celebrity: isRed ? match.redCeleb : match.blueCeleb,
   };
 }

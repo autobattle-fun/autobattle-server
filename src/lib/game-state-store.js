@@ -78,6 +78,28 @@ export function inferCard(oldScore, newScore, oldAces, newAces, lastCardHint = 0
   return { value, label };
 }
 
+export function calculateScoreFromCards(cards = []) {
+  let score = 0;
+  let aces = 0;
+  for (const card of cards) {
+    if (!card || !card.label) continue;
+    if (card.label === "A") {
+      score += 11;
+      aces += 1;
+    } else if (["J", "Q", "K", "10"].includes(card.label)) {
+      score += 10;
+    } else {
+      const val = parseInt(card.label, 10);
+      score += isNaN(val) ? 0 : val;
+    }
+  }
+  while (score > 21 && aces > 0) {
+    score -= 10;
+    aces -= 1;
+  }
+  return { score, aces };
+}
+
 export function cardLabel(value) {
   if (value === 1) return "A";
   if (value === 11) return "J";
