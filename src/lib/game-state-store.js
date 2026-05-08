@@ -1,5 +1,6 @@
 import { redis } from "../db/redis.js";
 import { logger } from "./logger.js";
+import { env } from "../config/env.js";
 
 /**
  * Redis-backed Game State Store
@@ -291,10 +292,11 @@ const BREAK_KEY = "autobattle:match:next_start_at";
  * @param {string} phase - The phase ("PREPARING" or "MATCHMAKING")
  */
 export async function setMatchBreakCountdown(nextStartAtUnix, phase = "MATCHMAKING") {
-  const ttl = Math.max(nextStartAtUnix - Math.floor(Date.now() / 1000), 1);
+  // Use a long TTL (24h) instead of just expiry buffer, so we can tell the difference
+  // between an expired countdown and a fresh server boot where no countdown was ever set.
   const data = JSON.stringify({ nextStartAtUnix, phase });
-  await redis.setex(BREAK_KEY, ttl + 60, data); // +60s buffer for reading after expiry
-  logger.info("Match break countdown set", { nextStartAt: new Date(nextStartAtUnix * 1000).toISOString(), ttlSeconds: ttl, phase });
+  await redis.setex(BREAK_KEY, 86400, data);
+  logger.info("Match break countdown set", { nextStartAt: new Date(nextStartAtUnix * 1000).toISOString(), phase });
 }
 
 /**
@@ -304,7 +306,7 @@ export async function setMatchBreakCountdown(nextStartAtUnix, phase = "MATCHMAKI
 export async function getMatchBreakCountdown() {
   const raw = await redis.get(BREAK_KEY);
   if (!raw) {
-    return { isBreak: false, remainingSeconds: 0, nextStartAt: null, phase: null };
+    return { isBreak: false, remainingSeconds: 0, nextStartAt: null, phase: null, isMissing: true };
   }
 
   let nextStartAtUnix;
@@ -326,14 +328,22 @@ export async function getMatchBreakCountdown() {
   const remaining = nextStartAtUnix - nowUnix;
 
   if (remaining <= 0) {
-    return { isBreak: false, remainingSeconds: 0, nextStartAt: null, phase: null };
+    return { isBreak: false, remainingSeconds: 0, nextStartAt: null, phase: null, isMissing: false };
+  }
+
+  // If we are in MATCHMAKING phase but only have PREPARATION_PHASE_SECONDS left,
+  // we are effectively in PREPARING phase.
+  let effectivePhase = phase;
+  if (phase === "MATCHMAKING" && remaining <= env.PREPARATION_PHASE_SECONDS) {
+    effectivePhase = "PREPARING";
   }
 
   return {
     isBreak: true,
     remainingSeconds: remaining,
     nextStartAt: new Date(nextStartAtUnix * 1000).toISOString(),
-    phase,
+    phase: effectivePhase,
+    isMissing: false,
   };
 }
 

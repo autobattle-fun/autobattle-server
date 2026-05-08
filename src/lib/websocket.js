@@ -151,6 +151,9 @@ async function handlePing(socket, message) {
       }
     }
 
+    // Always check for break countdown to provide to the frontend
+    countdown = await getMatchBreakCountdown();
+
     if (activeMatch) {
       // Get detailed game state from Redis
       logs = await getRoundSystemLogs(activeMatch.id);
@@ -212,9 +215,6 @@ async function handlePing(socket, message) {
         },
         phase: redisState?.phase || "AWAITING_INITIAL_DEAL", // Possible values: PENDING, MATCHMAKING, PREPARING, AWAITING_INITIAL_DEAL, P1_TURN, P2_TURN, AWAITING_FINAL_REVEAL_VRF, AWAITING_TIEBREAKER_VRF, ENDED, AWAITING_ACTION
       };
-    } else {
-      // No active match — check for break countdown
-      countdown = await getMatchBreakCountdown();
     }
   } catch (error) {
     logger.warn("Error building pong response", { error: error.message });
@@ -364,7 +364,7 @@ export function broadcast(eventType, payload, matchId) {
   logger.info("WebSocket broadcast", { eventType, matchId });
 
   // Forward to Telegram (fire-and-forget, never block the broadcast)
-  notifyEvent(eventType, payload, matchId).catch(() => {});
+  notifyEvent(eventType, payload, matchId).catch(() => { });
 }
 
 /**

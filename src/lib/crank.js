@@ -3,7 +3,7 @@ import { redis } from "../db/redis.js";
 import { logger } from "./logger.js";
 import { playRound, startMatch } from "../services/game.service.js";
 import { env } from "../config/env.js";
-import { getMatchBreakCountdown, clearMatchBreakCountdown } from "./game-state-store.js";
+import { getMatchBreakCountdown, clearMatchBreakCountdown, setMatchBreakCountdown } from "./game-state-store.js";
 
 // ── Distributed Lock ────────────────────────────────────────────────
 
@@ -188,8 +188,18 @@ async function maybeAutoStartMatch() {
     // No active match — check the break countdown
     const countdown = await getMatchBreakCountdown();
 
-    if (countdown.isBreak) {
+    if (countdown.isBreak && countdown.phase === "MATCHMAKING") {
       // Still in MATCHMAKING break period — wait
+      return;
+    }
+
+    if (countdown.isMissing) {
+      // Server just started or was idle for a long time — initialize MATCHMAKING phase
+      // Total break = Matchmaking (180s) + Preparation (120s) = 300s
+      const breakSeconds = env.MATCHMAKING_PHASE_SECONDS + env.PREPARATION_PHASE_SECONDS;
+      const nextStartAtUnix = Math.floor(Date.now() / 1000) + breakSeconds;
+      await setMatchBreakCountdown(nextStartAtUnix, "MATCHMAKING");
+      logger.info("Server started/idle — entering MATCHMAKING phase", { breakSeconds });
       return;
     }
 

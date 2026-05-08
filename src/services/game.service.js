@@ -733,8 +733,8 @@ export async function playRound(matchId) {
     await deleteGameState(gameId);
     await clearMatchLogs(gameId);
 
-    // Set the MATCHMAKING countdown for the next match (3 min wait)
-    const breakSeconds = env.MATCHMAKING_PHASE_SECONDS;
+    // Set the MATCHMAKING countdown for the next match (Matchmaking + Preparation wait)
+    const breakSeconds = env.MATCHMAKING_PHASE_SECONDS + env.PREPARATION_PHASE_SECONDS;
     const nextStartAtUnix = Math.floor(Date.now() / 1000) + breakSeconds;
     await setMatchBreakCountdown(nextStartAtUnix, "MATCHMAKING");
     logger.info("Match break started (MATCHMAKING)", {
