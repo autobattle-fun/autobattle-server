@@ -93,6 +93,147 @@ export function initWebSocket(httpServer) {
  * Client sends:  socket.emit("ping", { "timestamp": 1714000000000 })
  * Server sends:  socket.emit("pong", { "latency": 42, "gameState": {...}, "countdown": {...}, "serverTimestamp": ... })
  */
+export async function getFullGameState(matchId) {
+  try {
+    let activeMatch = null;
+    let useCache = false;
+
+    if (!matchId) {
+      useCache = true;
+    }
+
+    const cachedMatch = await redis.get("autobattle:ws:active_match");
+    if (cachedMatch) {
+      const parsed = JSON.parse(cachedMatch);
+      if (useCache || parsed.id === matchId) {
+        activeMatch = parsed;
+      }
+    }
+
+    if (!activeMatch) {
+      if (matchId) {
+        activeMatch = await prisma.match.findUnique({
+          where: { id: String(matchId) },
+          select: {
+            id: true,
+            gameId: true,
+            matchUuid: true,
+            status: true,
+            roundNumber: true,
+            redHp: true,
+            blueHp: true,
+            redName: true,
+            blueName: true,
+            llmRed: true,
+            llmBlue: true,
+            agentRed: true,
+            agentBlue: true,
+            createdAt: true,
+            redCeleb: true,
+            blueCeleb: true,
+          },
+        });
+      } else {
+        activeMatch = await prisma.match.findFirst({
+          where: {
+            status: { in: ["ACTIVE", "PAUSED", "PENDING", "MATCHMAKING"] },
+          },
+          orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            gameId: true,
+            matchUuid: true,
+            status: true,
+            roundNumber: true,
+            redHp: true,
+            blueHp: true,
+            redName: true,
+            blueName: true,
+            llmRed: true,
+            llmBlue: true,
+            agentRed: true,
+            agentBlue: true,
+            createdAt: true,
+            redCeleb: true,
+            blueCeleb: true,
+          },
+        });
+      }
+
+      if (activeMatch) {
+        await redis.setex(
+          "autobattle:ws:active_match",
+          2,
+          JSON.stringify(activeMatch),
+        );
+      } else if (!matchId) {
+        await redis.setex(
+          "autobattle:ws:active_match",
+          2,
+          JSON.stringify(null),
+        );
+      }
+    }
+
+    if (!activeMatch) return null;
+
+    const redisState = await getGameState(activeMatch.gameId);
+
+    const activePlayerColor = redisState?.activePlayer || "RED";
+    const activePlayerName =
+      activePlayerColor === "RED"
+        ? activeMatch.redName
+        : activeMatch.blueName;
+
+    return {
+      gameId: activeMatch.gameId,
+      matchId: activeMatch.id,
+      gameStatus:
+        activeMatch.status === "PAUSED" ? "ACTIVE" : activeMatch.status,
+      serverStatus: activeMatch.status === "PAUSED" ? "PAUSED" : "ACTIVE",
+      activePlayer: { color: activePlayerColor, name: activePlayerName },
+      playerStatus: redisState?.playerStatus || {
+        red: "WAITING",
+        blue: "WAITING",
+      },
+      roundNumber: activeMatch.roundNumber,
+      redHp: activeMatch.redHp,
+      blueHp: activeMatch.blueHp,
+      red: {
+        hp: activeMatch.redHp,
+        name: activeMatch.redName,
+        llm: activeMatch.llmRed,
+        score: redisState?.red?.score || 0,
+        stayed: redisState?.red?.stayed || false,
+        cards: redisState?.red?.cards || [],
+        celebrity: activeMatch.redCeleb,
+      },
+      blue: {
+        hp: activeMatch.blueHp,
+        name: activeMatch.blueName,
+        llm: activeMatch.llmBlue,
+        score: redisState?.blue?.score || 0,
+        stayed: redisState?.blue?.stayed || false,
+        cards: redisState?.blue?.cards || [],
+        celebrity: activeMatch.blueCeleb,
+      },
+      river: { red: redisState?.riverRed, blue: redisState?.riverBlue },
+      tiebreakerCards: redisState?.tiebreakerCards || [],
+      cardHistory: {
+        pastRounds: redisState?.pastRounds || [],
+        currentRound: {
+          redCards: redisState?.red?.cards || [],
+          blueCards: redisState?.blue?.cards || [],
+        },
+      },
+      phase: redisState?.phase || "AWAITING_INITIAL_DEAL",
+    };
+  } catch (error) {
+    logger.warn("Error building full game state", { error: error.message });
+    return null;
+  }
+}
+
 async function handlePing(socket, message) {
   const serverTimestamp = Date.now();
   const clientTimestamp = message.timestamp || serverTimestamp;
@@ -104,117 +245,20 @@ async function handlePing(socket, message) {
   let market = null;
 
   try {
-    // Check for active or paused match
-    let activeMatch = null;
-    const cachedMatch = await redis.get("autobattle:ws:active_match");
-
-    if (cachedMatch) {
-      activeMatch = JSON.parse(cachedMatch);
-    } else {
-      activeMatch = await prisma.match.findFirst({
-        where: {
-          status: { in: ["ACTIVE", "PAUSED", "PENDING", "MATCHMAKING"] },
-        },
-        orderBy: { createdAt: "desc" },
-        select: {
-          id: true,
-          gameId: true,
-          matchUuid: true,
-          status: true,
-          roundNumber: true,
-          redHp: true,
-          blueHp: true,
-          redName: true,
-          blueName: true,
-          llmRed: true,
-          llmBlue: true,
-          agentRed: true,
-          agentBlue: true,
-          createdAt: true,
-          redCeleb: true,
-          blueCeleb: true,
-        },
-      });
-
-      if (activeMatch) {
-        await redis.setex(
-          "autobattle:ws:active_match",
-          2,
-          JSON.stringify(activeMatch),
-        );
-      } else {
-        await redis.setex(
-          "autobattle:ws:active_match",
-          2,
-          JSON.stringify(null),
-        );
-      }
-    }
+    gameState = await getFullGameState();
 
     // Always check for break countdown to provide to the frontend
     countdown = await getMatchBreakCountdown();
 
-    if (activeMatch) {
-      // Get detailed game state from Redis
-      logs = await getRoundSystemLogs(activeMatch.id);
-      const redisState = await getGameState(activeMatch.gameId);
+    if (gameState) {
+      logs = await getRoundSystemLogs(gameState.matchId);
 
       const { getCurrentMarketPrices } = await import("./price-stream.js");
-      const currentMarketPrices = getCurrentMarketPrices(activeMatch.id);
+      const currentMarketPrices = getCurrentMarketPrices(gameState.matchId);
       market =
         Object.keys(currentMarketPrices).length > 0
           ? currentMarketPrices
           : null;
-
-      const activePlayerColor = redisState?.activePlayer || "RED";
-      const activePlayerName =
-        activePlayerColor === "RED"
-          ? activeMatch.redName
-          : activeMatch.blueName;
-
-      gameState = {
-        gameId: activeMatch.gameId,
-        matchId: activeMatch.id,
-        gameStatus:
-          activeMatch.status === "PAUSED" ? "ACTIVE" : activeMatch.status,
-        serverStatus: activeMatch.status === "PAUSED" ? "PAUSED" : "ACTIVE",
-        activePlayer: { color: activePlayerColor, name: activePlayerName },
-        playerStatus: redisState?.playerStatus || {
-          red: "WAITING",
-          blue: "WAITING",
-        },
-        roundNumber: activeMatch.roundNumber,
-        redHp: activeMatch.redHp,
-        blueHp: activeMatch.blueHp,
-        red: {
-          hp: activeMatch.redHp,
-          name: activeMatch.redName,
-          llm: activeMatch.llmRed,
-          score: redisState?.red?.score || 0,
-          stayed: redisState?.red?.stayed || false,
-          cards: redisState?.red?.cards || [],
-          celebrity: activeMatch.redCeleb,
-        },
-        blue: {
-          hp: activeMatch.blueHp,
-          name: activeMatch.blueName,
-          llm: activeMatch.llmBlue,
-          score: redisState?.blue?.score || 0,
-          stayed: redisState?.blue?.stayed || false,
-          cards: redisState?.blue?.cards || [],
-          celebrity: activeMatch.blueCeleb,
-        },
-        river: { red: redisState?.riverRed, blue: redisState?.riverBlue },
-        tiebreakerCards: redisState?.tiebreakerCards || [],
-        cardHistory: {
-          pastRounds: redisState?.pastRounds || [],
-          currentRound: {
-            redCards: redisState?.red?.cards || [],
-            blueCards: redisState?.blue?.cards || [],
-          },
-        },
-        phase: redisState?.phase || "AWAITING_INITIAL_DEAL", // Possible values: PENDING, MATCHMAKING, PREPARING, AWAITING_INITIAL_DEAL, P1_TURN, P2_TURN, AWAITING_FINAL_REVEAL_VRF, AWAITING_TIEBREAKER_VRF, ENDED, AWAITING_ACTION
-      };
     }
   } catch (error) {
     logger.warn("Error building pong response", { error: error.message });
@@ -355,26 +399,56 @@ function emitToRooms(eventType, envelope, matchId) {
  * Broadcast a game event to all connected clients.
  * Also forwards the event as a Telegram notification.
  */
-export function broadcast(eventType, payload, matchId) {
+export async function broadcast(eventType, payload, matchId) {
   if (!io) return;
 
-  const envelope = makeEnvelope(eventType, payload, matchId);
+  let finalPayload = payload;
+
+  if (matchId && payload && typeof payload === "object" && !payload.gameState) {
+    try {
+      const gameState = await getFullGameState(matchId);
+      if (gameState) {
+        finalPayload = { ...payload, gameState };
+      }
+    } catch (e) {
+      logger.warn("Error injecting gameState into broadcast", {
+        error: e.message,
+      });
+    }
+  }
+
+  const envelope = makeEnvelope(eventType, finalPayload, matchId);
   emitToRooms(eventType, envelope, matchId);
 
   logger.info("WebSocket broadcast", { eventType, matchId });
 
   // Forward to Telegram (fire-and-forget, never block the broadcast)
-  notifyEvent(eventType, payload, matchId).catch(() => { });
+  notifyEvent(eventType, finalPayload, matchId).catch(() => { });
 }
 
 /**
  * Broadcast a game event to WebSocket clients only (no Telegram).
  * Used for high-frequency events like market price updates.
  */
-export function broadcastNoTelegram(eventType, payload, matchId) {
+export async function broadcastNoTelegram(eventType, payload, matchId) {
   if (!io) return;
 
-  const envelope = makeEnvelope(eventType, payload, matchId);
+  let finalPayload = payload;
+
+  if (matchId && payload && typeof payload === "object" && !payload.gameState) {
+    try {
+      const gameState = await getFullGameState(matchId);
+      if (gameState) {
+        finalPayload = { ...payload, gameState };
+      }
+    } catch (e) {
+      logger.warn("Error injecting gameState into broadcastNoTelegram", {
+        error: e.message,
+      });
+    }
+  }
+
+  const envelope = makeEnvelope(eventType, finalPayload, matchId);
   emitToRooms(eventType, envelope, matchId);
 
   logger.info("WebSocket broadcast (no-telegram)", { eventType, matchId });

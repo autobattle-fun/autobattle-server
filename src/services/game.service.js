@@ -167,7 +167,7 @@ export async function startMatch() {
 
   wsEvents.matchCreated(
     {
-      game: {
+      gameState: {
         gameId,
         gameStatus: "MATCHMAKING",
         serverStatus: "ACTIVE",
@@ -378,7 +378,7 @@ export async function playRound(matchId) {
 
   wsEvents.cardsDealt(
     {
-      game: {
+      gameState: {
         activePlayer: {
           color: parseColor(gs.activePlayer),
           name:
@@ -982,9 +982,9 @@ async function runSingleAgentTurn(gameId, player, match) {
           },
           ...(myStayed || newScore !== scoreBefore
             ? {
-                red: buildPlayerState(updated, state, match, "RED"),
-                blue: buildPlayerState(updated, state, match, "BLUE"),
-              }
+              red: buildPlayerState(updated, state, match, "RED"),
+              blue: buildPlayerState(updated, state, match, "BLUE"),
+            }
             : {}),
         },
         match.id,
