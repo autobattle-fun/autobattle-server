@@ -397,14 +397,19 @@ function emitToRooms(eventType, envelope, matchId) {
  * Broadcast a game event to all connected clients.
  * Also forwards the event as a Telegram notification.
  */
-export async function broadcast(eventType, payload, matchId) {
+export async function broadcast(eventType, payload, matchId, sendGameState = true) {
   if (!io) return;
 
   let finalPayload = payload;
 
-  if (matchId && payload && typeof payload === "object" && !payload.gameState) {
+  if (matchId && payload && typeof payload === "object" && !payload.gameState && sendGameState) {
     try {
       const gameState = await getFullGameState(matchId);
+
+      if (eventType === "round:resolved" || eventType === "tiebreaker:resolved") {
+        gameState.phase = "ROUND_RESOLVED";
+      }
+
       if (gameState) {
         finalPayload = { ...payload, gameState };
       }
@@ -421,7 +426,7 @@ export async function broadcast(eventType, payload, matchId) {
   logger.info("WebSocket broadcast", { eventType, matchId });
 
   // Forward to Telegram (fire-and-forget, never block the broadcast)
-  notifyEvent(eventType, finalPayload, matchId).catch(() => {});
+  notifyEvent(eventType, finalPayload, matchId).catch(() => { });
 }
 
 /**
@@ -437,7 +442,7 @@ export async function broadcastNoTelegram(eventType, payload, matchId) {
     try {
       const gameState = await getFullGameState(matchId);
 
-      if (eventType === "round:resolved") {
+      if (eventType === "round:resolved" || eventType === "tiebreaker:resolved") {
         gameState.phase = "ROUND_RESOLVED";
       }
 
@@ -512,7 +517,7 @@ export const wsEvents = {
     broadcastNoTelegram("market:prices", prices, matchId);
   },
 
-  logBroadcast(role, log, matchId) {
+  logBroadcast(role, log, matchId, sendGameState = true) {
     broadcast(
       "log:broadcast",
       {
@@ -521,6 +526,7 @@ export const wsEvents = {
         timeStamp: Date.now(),
       },
       matchId,
+      sendGameState,
     );
 
     addRoundSystemLog(matchId, role, log);

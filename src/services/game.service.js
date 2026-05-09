@@ -351,13 +351,13 @@ export async function playRound(matchId) {
     }
   }
 
-  wsEvents.logBroadcast("system", "VRF Request: Initial cards", matchId);
+  wsEvents.logBroadcast("system", "VRF Request: Initial cards", matchId, false);
   await withRetry(() => solanaService.vrfStep(gameId, ROLL_TYPE.INITIAL_DEAL), {
     label: "vrfStep:INITIAL_DEAL",
     matchId,
     gameId,
   });
-  wsEvents.logBroadcast("system", "VRF Reveal: Cards dealt", matchId);
+  wsEvents.logBroadcast("system", "VRF Reveal: Cards dealt", matchId, false);
   gs = await solanaService.fetchGameState(gameId);
 
   let state = await getGameState(gameId);
@@ -428,13 +428,13 @@ export async function playRound(matchId) {
   const preRiverRedAces = gs.p1Aces;
   const preRiverBlueAces = gs.p2Aces;
 
-  wsEvents.logBroadcast("system", "VRF Request: River reveal", matchId);
+  wsEvents.logBroadcast("system", "VRF Request: River reveal", matchId, false);
   await withRetry(() => solanaService.vrfStep(gameId, ROLL_TYPE.FINAL_REVEAL), {
     label: "vrfStep:FINAL_REVEAL",
     matchId,
     gameId,
   });
-  wsEvents.logBroadcast("system", "VRF Reveal: River cards revealed", matchId);
+  wsEvents.logBroadcast("system", "VRF Reveal: River cards revealed", matchId, false);
   gs = await solanaService.fetchGameState(gameId);
 
   const riverRedCard = inferCard(
@@ -534,7 +534,7 @@ export async function playRound(matchId) {
     const preTbRedAces = gs.p1Aces;
     const preTbBlueAces = gs.p2Aces;
 
-    wsEvents.logBroadcast("system", "VRF Request: Tiebreaker draw", matchId);
+    wsEvents.logBroadcast("system", "VRF Request: Tiebreaker draw", matchId, false);
     await withRetry(() => solanaService.vrfStep(gameId, ROLL_TYPE.TIEBREAKER), {
       label: "vrfStep:TIEBREAKER",
       matchId,
@@ -544,6 +544,7 @@ export async function playRound(matchId) {
       "system",
       "VRF Reveal: Tiebreaker cards dealt",
       matchId,
+      false,
     );
     gs = await solanaService.fetchGameState(gameId);
 
@@ -564,7 +565,7 @@ export async function playRound(matchId) {
     state = await getGameState(gameId);
     wsEvents.tiebreakerResolved(
       {
-        playerStatus: state?.playerStatus || {
+        playerStatus: {
           red: "WAITING",
           blue: "WAITING",
         },
@@ -685,23 +686,12 @@ export async function playRound(matchId) {
     });
   }
 
-  // Archive round in Redis
-  await archiveRound(gameId, {
-    roundNumber: match.roundNumber,
-    redCards: state?.red?.cards || [],
-    blueCards: state?.blue?.cards || [],
-    redScoreFinal,
-    blueScoreFinal,
-    winner: roundWinner,
-  });
-
   // Step 8: Sync match state to Prisma
   const updatedMatch = await syncMatchState(match, gs);
 
-  state = await getGameState(gameId);
   wsEvents.roundResolved(
     {
-      playerStatus: state?.playerStatus || { red: "WAITING", blue: "WAITING" },
+      playerStatus: { red: "WAITING", blue: "WAITING" },
       phase,
       red: buildPlayerState(gs, state, match, "RED"),
       blue: buildPlayerState(gs, state, match, "BLUE"),
@@ -717,6 +707,7 @@ export async function playRound(matchId) {
     "system",
     `Round ${match.roundNumber} resolved. Winner: ${roundWinner || "TIE"}`,
     matchId,
+    false,
   );
 
   if (updatedMatch.status === "RESOLVED") {
@@ -737,6 +728,8 @@ export async function playRound(matchId) {
     wsEvents.logBroadcast(
       "system",
       `Match #${gameId} ended — Winner: ${updatedMatch.winner}`,
+      matchId,
+      false,
     );
     await deleteGameState(gameId);
     await clearMatchLogs(gameId);
@@ -748,6 +741,18 @@ export async function playRound(matchId) {
     logger.info("Match break started (MATCHMAKING)", {
       breakSeconds,
       nextStartAt: new Date(nextStartAtUnix * 1000).toISOString(),
+    });
+  }
+
+  if (updatedMatch.status !== "RESOLVED") {
+    // Archive round in Redis for next round
+    await archiveRound(gameId, {
+      roundNumber: match.roundNumber,
+      redCards: state?.red?.cards || [],
+      blueCards: state?.blue?.cards || [],
+      redScoreFinal,
+      blueScoreFinal,
+      winner: roundWinner,
     });
   }
 
@@ -903,6 +908,7 @@ async function runSingleAgentTurn(gameId, player, match) {
           "system",
           `VRF Request: Agent ${player} Hit`,
           match.id,
+          false
         );
         txSig = await withRetry(
           () => solanaService.vrfStep(gameId, ROLL_TYPE.HIT, player),
@@ -912,6 +918,7 @@ async function runSingleAgentTurn(gameId, player, match) {
           "system",
           `VRF Reveal: Agent ${player} Hit complete`,
           match.id,
+          false,
         );
       } catch (hitError) {
         if (hitError.message && hitError.message.includes("AlreadyStayed")) {
