@@ -42,6 +42,8 @@ import { getCurrentMarketPrices } from "../lib/price-stream.js";
 
 import { getCelebrities } from "./celebrity.service.js";
 
+const MOVE_DELAY_MS = 3000;
+
 // ── Match Lifecycle ─────────────────────────────────────────────────
 
 export async function startMatch() {
@@ -358,6 +360,7 @@ export async function playRound(matchId) {
     gameId,
   });
   wsEvents.logBroadcast("system", "VRF Reveal: Cards dealt", matchId, false);
+  await new Promise((r) => setTimeout(r, env.MOCK_SOLANA ? 100 : MOVE_DELAY_MS));
   gs = await solanaService.fetchGameState(gameId);
 
   let state = await getGameState(gameId);
@@ -435,6 +438,7 @@ export async function playRound(matchId) {
     gameId,
   });
   wsEvents.logBroadcast("system", "VRF Reveal: River cards revealed", matchId, false);
+  await new Promise((r) => setTimeout(r, env.MOCK_SOLANA ? 100 : MOVE_DELAY_MS));
   gs = await solanaService.fetchGameState(gameId);
 
   const riverRedCard = inferCard(
@@ -546,6 +550,7 @@ export async function playRound(matchId) {
       matchId,
       false,
     );
+    await new Promise((r) => setTimeout(r, env.MOCK_SOLANA ? 100 : MOVE_DELAY_MS));
     gs = await solanaService.fetchGameState(gameId);
 
     const tbRedCard = inferCard(
@@ -949,6 +954,8 @@ async function runSingleAgentTurn(gameId, player, match) {
         }
         throw hitError;
       }
+
+      await new Promise((r) => setTimeout(r, env.MOCK_SOLANA ? 100 : MOVE_DELAY_MS));
       const updated = await solanaService.fetchGameState(gameId);
 
       const newScore = isRed ? updated.p1Score : updated.p2Score;
@@ -995,8 +1002,6 @@ async function runSingleAgentTurn(gameId, player, match) {
         cardDealt: card,
         txSignature: txSig,
       });
-
-      await new Promise((r) => setTimeout(r, env.MOCK_SOLANA ? 100 : 5000));
 
       myScore = newScore;
       myAces = newAces;
@@ -1086,7 +1091,7 @@ async function runSingleAgentTurn(gameId, player, match) {
         txSignature: txSig,
       });
 
-      await new Promise((r) => setTimeout(r, env.MOCK_SOLANA ? 100 : 5000));
+      await new Promise((r) => setTimeout(r, env.MOCK_SOLANA ? 100 : MOVE_DELAY_MS));
 
       state = await getGameState(gameId);
       const latestGs = await solanaService.fetchGameState(gameId);

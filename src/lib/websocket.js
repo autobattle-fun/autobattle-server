@@ -9,6 +9,7 @@ import {
 } from "./system-log-state-store.js";
 import { notifyEvent } from "./telegram.js";
 import { redis } from "../db/redis.js";
+import { logWsEvent } from "./ws-logger.js";
 
 // ── WebSocket Manager ───────────────────────────────────────────────
 //
@@ -43,6 +44,7 @@ export function initWebSocket(httpServer) {
 
     socket.on("subscribe", (message) => {
       try {
+        logWsEvent("RECEIVED", "subscribe", message);
         if (message && message.matchId) {
           if (socket.subscribedMatchId) {
             socket.leave(socket.subscribedMatchId);
@@ -50,7 +52,11 @@ export function initWebSocket(httpServer) {
           socket.leave("global");
           socket.join(message.matchId);
           socket.subscribedMatchId = message.matchId;
-          socket.emit("subscribed", { matchId: message.matchId });
+          
+          const response = { matchId: message.matchId };
+          logWsEvent("SENT", "subscribed", response, message.matchId);
+          socket.emit("subscribed", response);
+
           logger.info("Client subscribed to match", {
             matchId: message.matchId,
           });
@@ -62,6 +68,7 @@ export function initWebSocket(httpServer) {
 
     socket.on("game:ping", async (message) => {
       try {
+        logWsEvent("RECEIVED", "game:ping", message);
         await handlePing(socket, message || {});
       } catch {
         // Ignore ping errors
@@ -77,9 +84,11 @@ export function initWebSocket(httpServer) {
     });
 
     // Send a welcome message
-    socket.emit("connected", {
+    const welcome = {
       message: "AutoBattle WebSocket connected",
-    });
+    };
+    logWsEvent("SENT", "connected", welcome);
+    socket.emit("connected", welcome);
   });
 
   logger.info("WebSocket server initialized", { path: "/ws" });
@@ -266,14 +275,16 @@ async function handlePing(socket, message) {
     logger.warn("Error building pong response", { error: error.message });
   }
 
-  socket.emit("game:pong", {
+  const response = {
     latency,
     gameState,
     market,
     logs,
     countdown,
     serverTimestamp,
-  });
+  };
+  logWsEvent("SENT", "game:pong", response, gameState?.matchId);
+  socket.emit("game:pong", response);
 
   // return;
 
@@ -389,6 +400,8 @@ function makeEnvelope(eventType, payload, matchId) {
  */
 function emitToRooms(eventType, envelope, matchId) {
   if (!io) return;
+
+  logWsEvent("SENT", eventType, envelope, matchId);
 
   if (matchId) {
     io.to(matchId).to("global").emit(eventType, envelope);
@@ -544,6 +557,8 @@ export const wsEvents = {
 
   pong(data) {
     if (!io) return;
-    io.emit("game:pong", { type: "game:pong", ...data });
+    const response = { type: "game:pong", ...data };
+    logWsEvent("SENT", "game:pong", response);
+    io.emit("game:pong", response);
   },
 };

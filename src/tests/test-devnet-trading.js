@@ -29,7 +29,7 @@ env.PREPARATION_PHASE_SECONDS = 2;
 env.MATCHMAKING_PHASE_SECONDS = 2;
 
 // --- LOGGING TO FILE ---
-const logFile = fs.createWriteStream("trade-test.log", { flags: "w" });
+const logFile = fs.createWriteStream("../../logs/trade-test.log", { flags: "w" });
 function logToFile(msg) {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
   logFile.write(line);
@@ -172,7 +172,7 @@ async function executeTrade(controllerFn, reqBody, testUser) {
 
   const signature = await solanaService.connection.sendRawTransaction(tx.serialize());
   console.log(`[TRADE] Tx sent: ${signature}`);
-  
+
   const latestBlockhash = await solanaService.connection.getLatestBlockhash();
   await solanaService.connection.confirmTransaction({
     blockhash: latestBlockhash.blockhash,
@@ -186,7 +186,7 @@ async function executeTrade(controllerFn, reqBody, testUser) {
 async function runDevnetTest() {
   try {
     startPriceStream();
-    
+
     // Use the test key if provided, otherwise generate a new one
     let testUser;
     if (process.env.TEST_USER_PRIVATE_KEY) {
@@ -202,7 +202,7 @@ async function runDevnetTest() {
     } else {
       testUser = Keypair.generate();
     }
-    
+
     await fundTestWallet(testUser);
 
     console.log("\n[GAME] --- Starting Match Simulation ---");
@@ -210,7 +210,7 @@ async function runDevnetTest() {
     console.log(`[GAME] Match started: ${match.id}`);
     console.log(`[GAME] Main Market: ${mainMarket.id}`);
     console.log(`[GAME] Round 1 Market: ${round1Market.id}`);
-    
+
     await new Promise(r => setTimeout(r, 3000)); // wait for PREPARING phase to pass
 
     // --- TEST 1: Buy YES on Main Market ---
@@ -221,7 +221,7 @@ async function runDevnetTest() {
       side: "YES",
       amountTokens: 20
     }, testUser);
-    
+
     const verifyRes1 = mockRes();
     await verifyTrade({ body: { signature: sig1, marketId: mainMarket.id, userPubkey: testUser.publicKey.toBase58(), side: "YES", amountTokens: 20 } }, verifyRes1);
     if (!verifyRes1.jsonData?.success) throw new Error(`Verify failed: ${JSON.stringify(verifyRes1.jsonData)}`);
@@ -249,7 +249,7 @@ async function runDevnetTest() {
     await playRound(match.id);
     const updatedMatch = await prisma.match.findUnique({ where: { id: match.id } });
     console.log(`[GAME] Round 1 complete. Red HP: ${updatedMatch.redHp}, Blue HP: ${updatedMatch.blueHp}`);
-    
+
     // --- CLAIM: Claim Round 1 Market Payout ---
     const resolvedRound1Market = await prisma.market.findUnique({ where: { id: round1Market.id } });
     if (resolvedRound1Market.winningOutcome === "YES") {
