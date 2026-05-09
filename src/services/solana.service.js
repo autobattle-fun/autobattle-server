@@ -344,8 +344,11 @@ class SolanaService {
         gs.p2Score += p2CardValue;
 
         // Simple win/lose logic for simulation
-        if (gs.p1Score > 21 && gs.p2Score > 21) {
-          /* tie */
+        if (gs.p1Score === gs.p2Score && gs.p1Score <= 21) {
+          gs.phase = { awaitingTiebreakerVrf: {} };
+          return this._generateMockTx();
+        } else if (gs.p1Score > 21 && gs.p2Score > 21) {
+          /* tie, no HP change */
         } else if (gs.p1Score > 21) gs.p1Hp -= 1;
         else if (gs.p2Score > 21) gs.p2Hp -= 1;
         else if (gs.p1Score > gs.p2Score) gs.p2Hp -= 1;
@@ -357,6 +360,31 @@ class SolanaService {
           // IMPORTANT: Do NOT reset scores here in the mock if we want the service to read them!
           // In the real contract, they might be reset by resolveRound, but for the mock
           // we'll keep them until the next round's INITIAL_DEAL.
+          gs.roundNumber += 1;
+          gs.p1Stayed = false;
+          gs.p2Stayed = false;
+          gs.phase = { awaitingInitialDealVrf: {} };
+        }
+      } else if (rollType === 3) {
+        // TIEBREAKER
+        const p1CardValue = Math.floor(Math.random() * 10) + 1;
+        const p2CardValue = Math.floor(Math.random() * 10) + 1;
+
+        gs.p1LastCard = p1CardValue;
+        gs.p2LastCard = p2CardValue;
+
+        // In tiebreaker, draw until someone wins or just simulate a result
+        if (p1CardValue > p2CardValue) {
+          gs.p2Hp -= 1;
+        } else if (p2CardValue > p1CardValue) {
+          gs.p1Hp -= 1;
+        }
+        // If they are equal, it remains in AWAITING_TIEBREAKER_VRF and loops again
+
+        if (gs.p1Hp <= 0 || gs.p2Hp <= 0) {
+          gs.phase = { ended: {} };
+        } else if (p1CardValue !== p2CardValue) {
+          // Round resolved, next round
           gs.roundNumber += 1;
           gs.p1Stayed = false;
           gs.p2Stayed = false;

@@ -553,12 +553,14 @@ export async function playRound(matchId) {
       gs.p1Score,
       preTbRedAces,
       gs.p1Aces,
+      gs.p1LastCard,
     );
     const tbBlueCard = inferCard(
       preTbBlueScore,
       gs.p2Score,
       preTbBlueAces,
       gs.p2Aces,
+      gs.p2LastCard,
     );
     await recordTiebreakerCards(gameId, tbRedCard, tbBlueCard);
 
@@ -976,7 +978,7 @@ async function runSingleAgentTurn(gameId, player, match) {
         else if (rawCardValue === 12) label = "Q";
         else if (rawCardValue === 13) label = "K";
 
-        const inferred = inferCard(myScore, newScore, myAces, newAces);
+        const inferred = inferCard(myScore, newScore, myAces, newAces, rawCardValue);
         card = { value: inferred.value, label };
       } else {
         card = inferCard(myScore, newScore, myAces, newAces);
