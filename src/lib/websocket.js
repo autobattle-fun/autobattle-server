@@ -181,9 +181,7 @@ export async function getFullGameState(matchId) {
 
     const activePlayerColor = redisState?.activePlayer || "RED";
     const activePlayerName =
-      activePlayerColor === "RED"
-        ? activeMatch.redName
-        : activeMatch.blueName;
+      activePlayerColor === "RED" ? activeMatch.redName : activeMatch.blueName;
 
     return {
       gameId: activeMatch.gameId,
@@ -264,7 +262,7 @@ async function handlePing(socket, message) {
     logger.warn("Error building pong response", { error: error.message });
   }
 
-  socket.emit("pong", {
+  socket.emit("game:pong", {
     latency,
     gameState,
     market,
@@ -423,7 +421,7 @@ export async function broadcast(eventType, payload, matchId) {
   logger.info("WebSocket broadcast", { eventType, matchId });
 
   // Forward to Telegram (fire-and-forget, never block the broadcast)
-  notifyEvent(eventType, finalPayload, matchId).catch(() => { });
+  notifyEvent(eventType, finalPayload, matchId).catch(() => {});
 }
 
 /**

@@ -713,6 +713,8 @@ const getMockGameState = (overrides = {}) => ({
     stayed: false,
     cards: [],
     celebrity: getMockCelebrity("Donald Trump"),
+    reason:
+      "I think AI is the future and we should invest in it. I am Donald Trump and I believe in AI.",
   },
   blue: {
     hp: 10,
@@ -736,9 +738,8 @@ const getMockGameState = (overrides = {}) => ({
 export const fireEventMethods = {
   fireMatchCreated: async (req, res) => {
     try {
-      const { getCelebrityByName } = await import(
-        "../services/celebrity.service.js"
-      );
+      const { getCelebrityByName } =
+        await import("../services/celebrity.service.js");
       const trump = await getCelebrityByName("Donald Trump");
       const biden = await getCelebrityByName("Joe Biden");
 
@@ -796,7 +797,10 @@ export const fireEventMethods = {
         "round:started",
         {
           roundNumber: 2,
-          gameState: getMockGameState({ roundNumber: 2 }),
+          gameState: getMockGameState({
+            roundNumber: 2,
+            phase: "ROUND_STARTED",
+          }),
         },
         999,
       );
@@ -862,32 +866,33 @@ export const fireEventMethods = {
       const isFinalized =
         playerStatus === "FINALIZED" || playerStatus === "DONE";
 
-      const redCards = [
+      const blueCards = [
         { value: 7, label: "7" },
         { value: 8, label: "8" },
       ];
-      if (isFinalized) redCards.push({ value: 6, label: "6" });
+      if (isFinalized) blueCards.push({ value: 6, label: "6" });
 
       const gameState = getMockGameState({
-        phase: "RED_TURN",
-        playerStatus: { red: playerStatus, blue: "WAITING" },
-        red: {
-          ...getMockGameState().red,
+        phase: "AWAITING_ACTION",
+        playerStatus: { red: "WAITING", blue: playerStatus },
+        blue: {
+          ...getMockGameState().blue,
           score: isFinalized ? 21 : 15,
-          cards: redCards,
+          cards: blueCards,
           stayed: playerStatus === "FINALIZED",
+          reason: "I have a strong hand, but I will take one more risk.",
         },
       });
 
       broadcast(
         "agent:decision",
         {
-          playerStatus: { red: playerStatus, blue: "WAITING" },
-          red: {
-            ...gameState.red,
+          playerStatus: { red: "WAITING", blue: playerStatus },
+          blue: {
+            ...gameState.blue,
             reason: "I have a strong hand, but I will take one more risk.",
           },
-          blue: { ...gameState.blue, reason: null },
+          red: { ...gameState.red, reason: null },
           gameState,
         },
         999,
