@@ -52,7 +52,7 @@ export function initWebSocket(httpServer) {
           socket.leave("global");
           socket.join(message.matchId);
           socket.subscribedMatchId = message.matchId;
-          
+
           const response = { matchId: message.matchId };
           logWsEvent("SENT", "subscribed", response, message.matchId);
           socket.emit("subscribed", response);
@@ -418,6 +418,8 @@ export async function broadcast(eventType, payload, matchId, sendGameState = tru
   if (!io) return;
 
   let finalPayload = payload;
+  const countdown = getMatchBreakCountdown();
+  finalPayload = { ...finalPayload, countdown };
 
   if (matchId && payload && typeof payload === "object" && !payload.gameState && sendGameState) {
     try {
@@ -434,7 +436,7 @@ export async function broadcast(eventType, payload, matchId, sendGameState = tru
       }
 
       if (gameState) {
-        finalPayload = { ...payload, gameState };
+        finalPayload = { ...finalPayload, gameState };
       }
     } catch (e) {
       logger.warn("Error injecting gameState into broadcast", {
@@ -460,6 +462,8 @@ export async function broadcastNoTelegram(eventType, payload, matchId) {
   if (!io) return;
 
   let finalPayload = payload;
+  const countdown = getMatchBreakCountdown();
+  finalPayload = { ...finalPayload, countdown };
 
   if (matchId && payload && typeof payload === "object" && !payload.gameState) {
     try {
@@ -470,7 +474,7 @@ export async function broadcastNoTelegram(eventType, payload, matchId) {
       }
 
       if (gameState) {
-        finalPayload = { ...payload, gameState };
+        finalPayload = { ...finalPayload, gameState };
       }
     } catch (e) {
       logger.warn("Error injecting gameState into broadcastNoTelegram", {
