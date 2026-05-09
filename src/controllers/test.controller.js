@@ -686,43 +686,79 @@ export async function buildTradeTransaction(req, res) {
 
 // --- WEBSOCKET EVENT TESTING ---
 
+const getMockCelebrity = (name) => ({
+  id: `mock-id-${name.toLowerCase().replace(" ", "-")}`,
+  name,
+  image: `https://abc.deforge.io/${name.toLowerCase().split(" ")[1]}.jpg`,
+  matchesPlayed: 10,
+  wins: 6,
+  winRate: 0.6,
+});
+
+const getMockGameState = (overrides = {}) => ({
+  gameId: 999,
+  matchId: "cmoljf12o0000gx8o44w41lgg",
+  gameStatus: "ACTIVE",
+  serverStatus: "ACTIVE",
+  activePlayer: { color: "RED", name: "Donald Trump" },
+  playerStatus: { red: "WAITING", blue: "WAITING" },
+  roundNumber: 1,
+  redHp: 10,
+  blueHp: 10,
+  red: {
+    hp: 10,
+    name: "Donald Trump",
+    llm: "meta-llama/llama-3-8b-instruct",
+    score: 0,
+    stayed: false,
+    cards: [],
+    celebrity: getMockCelebrity("Donald Trump"),
+  },
+  blue: {
+    hp: 10,
+    name: "Joe Biden",
+    llm: "mistralai/mixtral-8x7b-instruct",
+    score: 0,
+    stayed: false,
+    cards: [],
+    celebrity: getMockCelebrity("Joe Biden"),
+  },
+  river: { red: null, blue: null },
+  tiebreakerCards: [],
+  cardHistory: {
+    pastRounds: [],
+    currentRound: { redCards: [], blueCards: [] },
+  },
+  phase: "AWAITING_INITIAL_DEAL",
+  ...overrides,
+});
+
 export const fireEventMethods = {
   fireMatchCreated: async (req, res) => {
     try {
-      const { getCelebrityByName } =
-        await import("../services/celebrity.service.js");
+      const { getCelebrityByName } = await import(
+        "../services/celebrity.service.js"
+      );
       const trump = await getCelebrityByName("Donald Trump");
       const biden = await getCelebrityByName("Joe Biden");
+
+      const gameState = getMockGameState({
+        gameStatus: "MATCHMAKING",
+        phase: "AWAITING_INITIAL_DEAL",
+        red: {
+          ...getMockGameState().red,
+          celebrity: trump || getMockCelebrity("Donald Trump"),
+        },
+        blue: {
+          ...getMockGameState().blue,
+          celebrity: biden || getMockCelebrity("Joe Biden"),
+        },
+      });
 
       broadcast(
         "match:created",
         {
-          game: {
-            gameId: 999,
-            gameStatus: "ACTIVE",
-            serverStatus: "ACTIVE",
-            activePlayer: { color: "RED", name: "Donald Trump" },
-            playerStatus: { red: "WAITING", blue: "WAITING" },
-            phase: "AwaitingInitialDeal",
-            roundNumber: 1,
-            red: {
-              hp: 10,
-              score: 0,
-              name: "Donald Trump",
-              llm: "llama-3",
-              cards: [],
-              image: trump?.image || "https://abc.deforge.io/trump.jpg",
-            },
-            blue: {
-              hp: 10,
-              score: 0,
-              name: "Joe Biden",
-              llm: "mixtral",
-              cards: [],
-              image: biden?.image || "https://abc.deforge.io/biden.jpg",
-            },
-          },
-
+          gameState,
           market: {
             mainMarket: {
               id: "cmoljf1ap0001gx8ovd7lhv42",
@@ -730,19 +766,16 @@ export const fireEventMethods = {
               marketIndex: 0,
               targetRound: null,
               status: "OPEN",
-
               yesPrice: 0.63,
               noPrice: 0.37,
               totalVolumeRaw: 1000,
             },
             roundMarket: {
-              // Send Round Market only when first round market is created
               id: "cmoljf1ia0002gx8ooa94ac1e",
               matchId: "cmoljf12o0000gx8o44w41lgg",
               marketIndex: 1,
-              targetRound: 2,
+              targetRound: 1,
               status: "OPEN",
-
               yesPrice: 0.63,
               noPrice: 0.37,
               totalVolumeRaw: 900,
@@ -756,12 +789,14 @@ export const fireEventMethods = {
       res.status(500).json({ success: false, error: e.message });
     }
   },
+
   fireRoundStarted: async (req, res) => {
     try {
       broadcast(
         "round:started",
         {
           roundNumber: 2,
+          gameState: getMockGameState({ roundNumber: 2 }),
         },
         999,
       );
@@ -770,36 +805,36 @@ export const fireEventMethods = {
       res.status(500).json({ success: false, error: e.message });
     }
   },
+
   fireCardsDealt: async (req, res) => {
     try {
+      const gameState = getMockGameState({
+        phase: "RED_TURN",
+        playerStatus: { red: "THINKING", blue: "WAITING" },
+        red: {
+          ...getMockGameState().red,
+          hp: 10,
+          score: 15,
+          cards: [
+            { value: 7, label: "7" },
+            { value: 8, label: "8" },
+          ],
+        },
+        blue: {
+          ...getMockGameState().blue,
+          hp: 10,
+          score: 12,
+          cards: [
+            { value: 10, label: "10" },
+            { value: 2, label: "2" },
+          ],
+        },
+      });
+
       broadcast(
         "cards:dealt",
         {
-          game: {
-            activePlayer: { color: "RED", name: "Donald Trump" },
-            playerStatus: { red: "THINKING", blue: "WAITING" },
-            phase: "RedTurn",
-            red: {
-              hp: 9,
-              score: 15,
-              name: "Donald Trump",
-              llm: "llama-3",
-              cards: [
-                { value: 7, label: "7" },
-                { value: 8, label: "8" },
-              ],
-            },
-            blue: {
-              hp: 8,
-              score: 12,
-              name: "Joe Biden",
-              llm: "mixtral",
-              cards: [
-                { value: 10, label: "10" },
-                { value: 2, label: "2" },
-              ],
-            },
-          },
+          gameState,
           market: {
             mainMarket: {
               id: "cmoljf1ap0001gx8ovd7lhv42",
@@ -807,22 +842,9 @@ export const fireEventMethods = {
               marketIndex: 0,
               targetRound: null,
               status: "OPEN",
-
-              yesPrice: 0.63,
-              noPrice: 0.37,
-              totalVolumeRaw: 1000,
-            },
-            roundMarket: {
-              // Send Round Market only when first round market is created
-              id: "cmoljf1ia0002gx8ooa94ac1e",
-              matchId: "cmoljf12o0000gx8o44w41lgg",
-              marketIndex: 1,
-              targetRound: 3,
-              status: "OPEN",
-
-              yesPrice: 0.63,
-              noPrice: 0.37,
-              totalVolumeRaw: 900,
+              yesPrice: 0.65,
+              noPrice: 0.35,
+              totalVolumeRaw: 1200,
             },
           },
         },
@@ -833,39 +855,40 @@ export const fireEventMethods = {
       res.status(500).json({ success: false, error: e.message });
     }
   },
+
   fireAgentDecision: async (req, res) => {
     try {
       const { playerStatus } = req.params;
       const isFinalized =
         playerStatus === "FINALIZED" || playerStatus === "DONE";
 
+      const redCards = [
+        { value: 7, label: "7" },
+        { value: 8, label: "8" },
+      ];
+      if (isFinalized) redCards.push({ value: 6, label: "6" });
+
+      const gameState = getMockGameState({
+        phase: "RED_TURN",
+        playerStatus: { red: playerStatus, blue: "WAITING" },
+        red: {
+          ...getMockGameState().red,
+          score: isFinalized ? 21 : 15,
+          cards: redCards,
+          stayed: playerStatus === "FINALIZED",
+        },
+      });
+
       broadcast(
         "agent:decision",
         {
           playerStatus: { red: playerStatus, blue: "WAITING" },
-          ...(isFinalized && {
-            red: {
-              hp: 9,
-              score: 23,
-              name: "Donald Trump",
-              llm: "llama-3",
-              cards: [
-                { value: 7, label: "7" },
-                { value: 8, label: "8" },
-                { value: 11, label: "1" },
-              ],
-            },
-            blue: {
-              hp: 8,
-              score: 12,
-              name: "Joe Biden",
-              llm: "mixtral",
-              cards: [
-                { value: 10, label: "10" },
-                { value: 2, label: "2" },
-              ],
-            },
-          }),
+          red: {
+            ...gameState.red,
+            reason: "I have a strong hand, but I will take one more risk.",
+          },
+          blue: { ...gameState.blue, reason: null },
+          gameState,
         },
         999,
       );
@@ -874,50 +897,62 @@ export const fireEventMethods = {
       res.status(500).json({ success: false, error: e.message });
     }
   },
+
   fireRiverFlowing: async (req, res) => {
     try {
+      const gameState = getMockGameState({
+        phase: "AWAITING_FINAL_REVEAL",
+        playerStatus: { red: "WAITING", blue: "WAITING" },
+      });
+
       broadcast(
         "river:flowing",
         {
           playerStatus: { red: "WAITING", blue: "WAITING" },
-          phase: "AwaitingFinalReveal",
+          phase: "AWAITING_FINAL_REVEAL",
+          gameState,
         },
         999,
       );
-      res.json({ success: true, message: "Fired riverRevealed" });
+      res.json({ success: true, message: "Fired riverFlowing" });
     } catch (e) {
       res.status(500).json({ success: false, error: e.message });
     }
   },
+
   fireRoundResolved: async (req, res) => {
     try {
+      const gameState = getMockGameState({
+        phase: "ROUND_RESOLVED",
+        redHp: 10,
+        blueHp: 8,
+        red: {
+          ...getMockGameState().red,
+          score: 20,
+          cards: [
+            { value: 10, label: "10" },
+            { value: 10, label: "10" },
+          ],
+        },
+        blue: {
+          ...getMockGameState().blue,
+          hp: 8,
+          score: 18,
+          cards: [
+            { value: 9, label: "9" },
+            { value: 9, label: "9" },
+          ],
+        },
+      });
+
       broadcast(
         "round:resolved",
         {
           playerStatus: { red: "WAITING", blue: "WAITING" },
-          phase: "RedWon",
-          red: {
-            hp: 9,
-            score: 15,
-            name: "Donald Trump",
-            llm: "llama-3",
-            cards: [
-              { value: 7, label: "7" },
-              { value: 8, label: "8" },
-              { value: 10, label: "10" },
-            ],
-          },
-          blue: {
-            hp: 8,
-            score: 12,
-            name: "Joe Biden",
-            llm: "mixtral",
-            cards: [
-              { value: 10, label: "10" },
-              { value: 2, label: "2" },
-              { value: 5, label: "5" },
-            ],
-          },
+          phase: "RED_WON",
+          red: gameState.red,
+          blue: gameState.blue,
+          gameState,
         },
         999,
       );
@@ -926,12 +961,14 @@ export const fireEventMethods = {
       res.status(500).json({ success: false, error: e.message });
     }
   },
+
   fireTiebreakerStarted: async (req, res) => {
     try {
       broadcast(
         "tiebreaker:started",
         {
-          phase: "AwaitingTiebreaker",
+          phase: "AWAITING_TIEBREAKER_VRF",
+          gameState: getMockGameState({ phase: "AWAITING_TIEBREAKER_VRF" }),
         },
         999,
       );
@@ -940,35 +977,29 @@ export const fireEventMethods = {
       res.status(500).json({ success: false, error: e.message });
     }
   },
+
   fireTiebreakerResolved: async (req, res) => {
     try {
+      const gameState = getMockGameState({
+        phase: "BLUE_WON",
+        redHp: 8,
+        blueHp: 10,
+        tiebreakerCards: [
+          {
+            red: { value: 5, label: "5" },
+            blue: { value: 8, label: "8" },
+          },
+        ],
+      });
+
       broadcast(
         "tiebreaker:resolved",
         {
           playerStatus: { red: "WAITING", blue: "WAITING" },
-          phase: "BlueWon",
-          red: {
-            hp: 2,
-            score: 15,
-            name: "Donald Trump",
-            llm: "llama-3",
-            cards: [
-              { value: 7, label: "7" },
-              { value: 8, label: "8" },
-              { value: 10, label: "10" },
-            ],
-          },
-          blue: {
-            hp: 1,
-            score: 12,
-            name: "Joe Biden",
-            llm: "mixtral",
-            cards: [
-              { value: 10, label: "10" },
-              { value: 2, label: "2" },
-              { value: 5, label: "5" },
-            ],
-          },
+          phase: "BLUE_WON",
+          red: gameState.red,
+          blue: gameState.blue,
+          gameState,
         },
         999,
       );
@@ -977,33 +1008,24 @@ export const fireEventMethods = {
       res.status(500).json({ success: false, error: e.message });
     }
   },
+
   fireMatchEnded: async (req, res) => {
     try {
+      const gameState = getMockGameState({
+        phase: "ENDED",
+        gameStatus: "RESOLVED",
+        redHp: 0,
+        blueHp: 6,
+      });
+
       broadcast(
         "match:ended",
         {
-          phase: "Ended",
+          phase: "ENDED",
           gameId: 999,
-          red: {
-            hp: 0,
-            score: 15,
-            name: "Donald Trump",
-            llm: "llama-3",
-            cards: [
-              { value: 7, label: "7" },
-              { value: 8, label: "8" },
-            ],
-          },
-          blue: {
-            hp: 8,
-            score: 12,
-            name: "Joe Biden",
-            llm: "mixtral",
-            cards: [
-              { value: 10, label: "10" },
-              { value: 2, label: "2" },
-            ],
-          },
+          red: gameState.red,
+          blue: gameState.blue,
+          gameState,
         },
         999,
       );
@@ -1012,6 +1034,7 @@ export const fireEventMethods = {
       res.status(500).json({ success: false, error: e.message });
     }
   },
+
   fireGamePaused: async (req, res) => {
     try {
       broadcast(
@@ -1021,6 +1044,10 @@ export const fireEventMethods = {
           serverStatus: "PAUSED",
           reason: "Manual intervention",
           error: "RPC timeout",
+          gameState: getMockGameState({
+            serverStatus: "PAUSED",
+            gameStatus: "PAUSED",
+          }),
         },
         999,
       );
@@ -1029,6 +1056,7 @@ export const fireEventMethods = {
       res.status(500).json({ success: false, error: e.message });
     }
   },
+
   fireGameResumed: async (req, res) => {
     try {
       broadcast(
@@ -1036,37 +1064,10 @@ export const fireEventMethods = {
         {
           gameId: 999,
           serverStatus: "RESUMED",
-          gameState: {
-            matchId: "dummy-match-id-123",
-            gameId: 999,
-            gameStatus: "ACTIVE",
-            serverStatus: "ACTIVE",
-            activePlayer: { color: "RED", name: "Donald Trump" },
-            playerStatus: { red: "WAITING", blue: "WAITING" },
-            roundNumber: 1,
-            red: {
-              hp: 10, score: 15, name: "Donald Trump", llm: "llama-3", cards: [], celebrity: {
-                id: "cmosz852i0000zkjvtee3rztr",
-                name: "Donald Trump",
-                image: "https://abc.deforge.io/trump.jpg",
-                matchesPlayed: 10,
-                wins: 6,
-                winRate: 0.6,
-              }
-            },
-            blue: {
-              hp: 10, score: 12, name: "Joe Biden", llm: "mixtral", cards: [], celebrity: {
-                id: "cmosz852i0000zkjvtee3rztr",
-                name: "Joe Biden",
-                image: "https://abc.deforge.io/biden.jpg",
-                matchesPlayed: 10,
-                wins: 6,
-                winRate: 0.6,
-              }
-            },
-            cardHistory: { pastRounds: [], currentRound: { redCards: [], blueCards: [] } },
-            phase: "AWAITING_ACTION",
-          },
+          gameState: getMockGameState(),
+          market: null,
+          logs: [],
+          countdown: null,
           serverTimestamp: Date.now(),
         },
         999,
@@ -1076,6 +1077,46 @@ export const fireEventMethods = {
       res.status(500).json({ success: false, error: e.message });
     }
   },
+
+  fireBreakPreparing: async (req, res) => {
+    try {
+      const preparingEndUnix = Math.floor(Date.now() / 1000) + 120;
+      broadcast(
+        "break:preparing",
+        {
+          nextMatchAt: new Date(preparingEndUnix * 1000).toISOString(),
+          gameState: getMockGameState({
+            gameStatus: "MATCHMAKING",
+            phase: "PREPARING",
+          }),
+        },
+        999,
+      );
+      res.json({ success: true, message: "Fired breakPreparing" });
+    } catch (e) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  },
+
+  fireGameError: async (req, res) => {
+    try {
+      broadcast(
+        "game:error",
+        {
+          matchId: "cmoljf12o0000gx8o44w41lgg",
+          label: "vrfStep:INITIAL_DEAL",
+          error: "RPC node timeout",
+          severity: "CRITICAL",
+          gameState: getMockGameState(),
+        },
+        999,
+      );
+      res.json({ success: true, message: "Fired gameError" });
+    } catch (e) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  },
+
   fireMarketPrices: async (req, res) => {
     try {
       broadcast(
@@ -1087,7 +1128,6 @@ export const fireEventMethods = {
             marketIndex: 0,
             targetRound: null,
             status: "OPEN",
-
             yesPrice: 0.63,
             noPrice: 0.37,
             totalVolumeRaw: 1000,
@@ -1098,11 +1138,11 @@ export const fireEventMethods = {
             marketIndex: 1,
             targetRound: 2,
             status: "OPEN",
-
             yesPrice: 0.63,
             noPrice: 0.37,
             totalVolumeRaw: 900,
           },
+          gameState: getMockGameState(),
         },
         999,
       );
@@ -1111,6 +1151,7 @@ export const fireEventMethods = {
       res.status(500).json({ success: false, error: e.message });
     }
   },
+
   fireLogBroadcast: async (req, res) => {
     try {
       wsEvents.logBroadcast("red", "I Hit the card because I wanted to", 999);
@@ -1119,38 +1160,20 @@ export const fireEventMethods = {
       res.status(500).json({ success: false, error: e.message });
     }
   },
+
   firePong: async (req, res) => {
     try {
       wsEvents.pong({
         latency: 42,
-        gameState: {
-          matchId: "dummy-match-id-123",
-          gameId: 999,
-          gameStatus: "ACTIVE",
-          serverStatus: "ACTIVE",
-          activePlayer: { color: "RED", name: "Donald Trump" },
-          playerStatus: { red: "THINKING", blue: "WAITING" },
-          roundNumber: 1,
-          red: {
-            hp: 10,
-            score: 15,
-            name: "Donald Trump",
-            llm: "llama-3",
-            cards: [],
+        gameState: getMockGameState(),
+        market: null,
+        logs: [
+          {
+            role: "red",
+            message: "I Hit the card because I wanted to",
+            timestamp: Date.now(),
           },
-          blue: {
-            hp: 10,
-            score: 12,
-            name: "Joe Biden",
-            llm: "mixtral",
-            cards: [],
-          },
-          cardHistory: {
-            pastRounds: [],
-            currentRound: { redCards: [], blueCards: [] },
-          },
-          phase: "AWAITING_ACTION",
-        },
+        ],
         countdown: null,
         serverTimestamp: Date.now(),
       });

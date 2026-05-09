@@ -70,6 +70,11 @@ testRoutes.get(
 testRoutes.get("/fire-event/match-ended", fireEventMethods.fireMatchEnded);
 testRoutes.get("/fire-event/game-paused", fireEventMethods.fireGamePaused);
 testRoutes.get("/fire-event/game-resumed", fireEventMethods.fireGameResumed);
+testRoutes.get(
+  "/fire-event/break-preparing",
+  fireEventMethods.fireBreakPreparing,
+);
+testRoutes.get("/fire-event/game-error", fireEventMethods.fireGameError);
 testRoutes.get("/fire-event/market-prices", fireEventMethods.fireMarketPrices);
 testRoutes.get("/fire-event/log-broadcast", fireEventMethods.fireLogBroadcast);
 testRoutes.get("/fire-event/pong", fireEventMethods.firePong);
