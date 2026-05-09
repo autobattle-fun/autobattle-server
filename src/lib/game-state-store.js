@@ -188,6 +188,11 @@ export async function recordRiverCards(gameId, redCard, blueCard) {
 
   state.riverRed = redCard;
   state.riverBlue = blueCard;
+
+  // Add to player cards array
+  state.red.cards.push(redCard);
+  state.blue.cards.push(blueCard);
+
   await setGameState(gameId, state);
 }
 
@@ -199,6 +204,11 @@ export async function recordTiebreakerCards(gameId, redCard, blueCard) {
   if (!state) return;
 
   state.tiebreakerCards.push({ red: redCard, blue: blueCard });
+
+  // Add to player cards array
+  state.red.cards.push(redCard);
+  state.blue.cards.push(blueCard);
+
   await setGameState(gameId, state);
 }
 

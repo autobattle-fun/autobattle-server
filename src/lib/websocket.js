@@ -438,6 +438,11 @@ export async function broadcastNoTelegram(eventType, payload, matchId) {
   if (matchId && payload && typeof payload === "object" && !payload.gameState) {
     try {
       const gameState = await getFullGameState(matchId);
+
+      if (eventType === "round:resolved") {
+        gameState.phase = "ROUND_RESOLVED";
+      }
+
       if (gameState) {
         finalPayload = { ...payload, gameState };
       }

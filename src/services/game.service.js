@@ -849,10 +849,11 @@ async function runSingleAgentTurn(gameId, player, match) {
   }
 
   {
+    const oppPlayer = isRed ? "blue" : "red";
     state = await updateGameState(gameId, {
       playerStatus: {
-        ...state.playerStatus,
         [player.toLowerCase()]: "THINKING",
+        [oppPlayer]: "WAITING",
       },
     });
 
@@ -1051,7 +1052,7 @@ async function runSingleAgentTurn(gameId, player, match) {
         },
         playerStatus: {
           ...freshState.playerStatus,
-          [player.toLowerCase()]: "FINALIZED",
+          [player.toLowerCase()]: "WAITING",
         },
       });
 
