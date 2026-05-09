@@ -60,7 +60,7 @@ export function initWebSocket(httpServer) {
       }
     });
 
-    socket.on("ping", async (message) => {
+    socket.on("game:ping", async (message) => {
       try {
         await handlePing(socket, message || {});
       } catch {
@@ -530,6 +530,6 @@ export const wsEvents = {
 
   pong(data) {
     if (!io) return;
-    io.emit("pong", { type: "pong", ...data });
+    io.emit("game:pong", { type: "game:pong", ...data });
   },
 };
