@@ -2,7 +2,7 @@ import { Server as SocketIOServer } from "socket.io";
 import { env } from "../config/env.js";
 import { logger } from "./logger.js";
 import { prisma } from "../db/prisma.js";
-import { getGameState, getMatchBreakCountdown } from "./game-state-store.js";
+import { getGameState, getMatchBreakCountdown, calculateScoreFromCards } from "./game-state-store.js";
 import {
   addRoundSystemLog,
   getRoundSystemLogs,
@@ -201,7 +201,9 @@ export async function getFullGameState(matchId) {
         hp: activeMatch.redHp,
         name: activeMatch.redName,
         llm: activeMatch.llmRed,
-        score: redisState?.red?.score || 0,
+        score: (redisState?.red?.score || 0) === 0 && (redisState?.red?.cards || []).length > 0
+          ? calculateScoreFromCards(redisState.red.cards).score
+          : (redisState?.red?.score || 0),
         stayed: redisState?.red?.stayed || false,
         cards: redisState?.red?.cards || [],
         celebrity: activeMatch.redCeleb,
@@ -210,7 +212,9 @@ export async function getFullGameState(matchId) {
         hp: activeMatch.blueHp,
         name: activeMatch.blueName,
         llm: activeMatch.llmBlue,
-        score: redisState?.blue?.score || 0,
+        score: (redisState?.blue?.score || 0) === 0 && (redisState?.blue?.cards || []).length > 0
+          ? calculateScoreFromCards(redisState.blue.cards).score
+          : (redisState?.blue?.score || 0),
         stayed: redisState?.blue?.stayed || false,
         cards: redisState?.blue?.cards || [],
         celebrity: activeMatch.blueCeleb,
@@ -408,6 +412,12 @@ export async function broadcast(eventType, payload, matchId, sendGameState = tru
 
       if (eventType === "round:resolved" || eventType === "tiebreaker:resolved") {
         gameState.phase = "ROUND_RESOLVED";
+      }
+      if (eventType === "agent:decision" && payload.red.reason) {
+        gameState.red.reason = payload.red.reason;
+      }
+      if (eventType === "agent:decision" && payload.blue.reason) {
+        gameState.blue.reason = payload.blue.reason;
       }
 
       if (gameState) {

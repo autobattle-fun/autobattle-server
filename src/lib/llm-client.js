@@ -25,8 +25,8 @@ import { getCelebrityByName } from "../services/celebrity.service.js";
 
 // Free model for testing
 const OPENROUTER_MODELS = [
-  "openrouter/free",
-  "openrouter/free"
+  "microsoft/phi-4-mini-instruct",
+  "microsoft/phi-4-mini-instruct"
 ]
 
 /**
