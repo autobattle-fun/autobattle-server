@@ -824,6 +824,7 @@ async function runAgentTurns(gameId, initialGs, match) {
       }
     }
     latestGs = await solanaService.fetchGameState(gameId);
+    await new Promise((r) => setTimeout(r, env.MOCK_SOLANA ? 100 : 2000));
   }
 }
 
@@ -837,37 +838,6 @@ async function runSingleAgentTurn(gameId, player, match) {
     (await mutateGameState(gameId, (draft) =>
       applyOnChainState(draft, gs, parseGamePhase(gs.phase)),
     )) || state;
-
-  // Auto-heal missing cards (if a transaction succeeded on-chain but we crashed before saving to Redis)
-  // const { score: redCalcScore, aces: redCalcAces } = calculateScoreFromCards(state.red.cards);
-  // if (gs.p1Score > redCalcScore) {
-  //   logger.info("Auto-healing RED cards", { gameId, chainScore: gs.p1Score, calcScore: redCalcScore });
-  //   const card = inferCard(
-  //     redCalcScore,
-  //     gs.p1Score,
-  //     redCalcAces,
-  //     gs.p1Aces,
-  //     gs.p1LastCard,
-  //   );
-  //   await recordCardDealt(gameId, "RED", card);
-  //   await syncOnChainState(gameId, gs, parseGamePhase(gs.phase));
-  //   state = await getGameState(gameId);
-  // }
-
-  // const { score: blueCalcScore, aces: blueCalcAces } = calculateScoreFromCards(state.blue.cards);
-  // if (gs.p2Score > blueCalcScore) {
-  //   logger.info("Auto-healing BLUE cards", { gameId, chainScore: gs.p2Score, calcScore: blueCalcScore });
-  //   const card = inferCard(
-  //     blueCalcScore,
-  //     gs.p2Score,
-  //     blueCalcAces,
-  //     gs.p2Aces,
-  //     gs.p2LastCard,
-  //   );
-  //   await recordCardDealt(gameId, "BLUE", card);
-  //   await syncOnChainState(gameId, gs, parseGamePhase(gs.phase));
-  //   state = await getGameState(gameId);
-  // }
 
   let myScore = isRed ? gs.p1Score : gs.p2Score;
   let oppScore = isRed ? gs.p2Score : gs.p1Score;
