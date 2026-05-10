@@ -63,8 +63,6 @@ export async function startMatch() {
 
   const redName = redCeleb.name;
   const blueName = blueCeleb.name;
-  const redImage = redCeleb.image;
-  const blueImage = blueCeleb.image;
 
   logger.info("Starting match", {
     gameId,
@@ -534,6 +532,8 @@ export async function playRound(matchId) {
     matchId,
   );
 
+  // Contract increments roundNumber for the next round unless the game ended.
+  // Thus, if it didn't end, the resolved round is gs.roundNumber - 1.
   const finishedRound = phase === "ENDED" ? gs.roundNumber : gs.roundNumber - 1;
 
   let roundWinningOutcome = null;
@@ -653,6 +653,7 @@ export async function playRound(matchId) {
       matchId,
     );
 
+    // Contract increments roundNumber for the next round unless the game ended.
     const finishedRoundTb =
       phase === "ENDED" ? gs.roundNumber : gs.roundNumber - 1;
     let tbWinningOutcome = null;
@@ -744,7 +745,7 @@ export async function playRound(matchId) {
     });
   }
 
-  const updatedMatch = await syncMatchState(match, gs);
+  const updatedMatch = await syncMatchState(match, gs, match.status);
 
   wsEvents.roundResolved(
     {
@@ -757,7 +758,6 @@ export async function playRound(matchId) {
   );
 
   if (updatedMatch.status === "RESOLVED") {
-    // 🚨 FIX 1: Send uppercase "ENDED"
     wsEvents.matchEnded(
       {
         phase: "ENDED",
@@ -773,10 +773,8 @@ export async function playRound(matchId) {
       `Match ended — Winner: ${updatedMatch.winner}`,
     );
 
-    // 🚨 FIX 2: Do NOT aggressively delete the Redis state immediately!
+    // Do NOT aggressively delete the Redis state immediately!
     // Leaving it intact means the frontend can still fetch the final game summary via REST.
-    // await deleteGameState(gameId);
-
     await clearMatchLogs(gameId);
 
     const breakSeconds =
@@ -804,7 +802,18 @@ async function runAgentTurns(gameId, initialGs, match) {
   let currentPlayer = parseColor(latestGs.activePlayer) || "RED";
   let state = await getGameState(gameId);
 
+  const MAX_TURNS = 20;
+  let turnCount = 0;
+
   while (!state.red.stayed || !state.blue.stayed) {
+    if (++turnCount > MAX_TURNS) {
+      logger.error("runAgentTurns exceeded MAX_TURNS — aborting", {
+        gameId,
+        matchId: match.id,
+      });
+      throw new Error("Agent turn loop exceeded safety limit");
+    }
+
     currentPlayer = parseColor(latestGs.activePlayer) || currentPlayer;
     if (currentPlayer === "RED" && state.red.stayed && !state.blue.stayed) {
       currentPlayer = "BLUE";
@@ -1152,18 +1161,14 @@ async function runSingleAgentTurn(gameId, player, match) {
 
 // ── Match State Sync ────────────────────────────────────────────────
 
-async function syncMatchState(match, gs) {
+async function syncMatchState(match, gs, currentStatus) {
   const phase = parseGamePhase(gs.phase);
   const isEnded = phase === "ENDED";
   const winner = isEnded ? (gs.p1Hp === 0 ? "BLUE" : "RED") : null;
 
   // Don't transition out of PAUSED state automatically
-  const currentMatch = await prisma.match.findUnique({
-    where: { id: match.id },
-    select: { status: true },
-  });
-  if (currentMatch?.status === "PAUSED") {
-    return currentMatch;
+  if (currentStatus === "PAUSED") {
+    return { ...match, status: "PAUSED" };
   }
 
   const updatedMatch = await prisma.match.update({
@@ -1199,37 +1204,36 @@ async function syncMatchState(match, gs) {
         data: { status: "RESOLVED", winningOutcome, resolvesAt: new Date() },
       });
 
-      // 2. Update Celebrity Stats
+      // 2. Update Celebrity Stats (Atomic Increment)
       if (updatedMatch.redCelebId && updatedMatch.blueCelebId) {
         const redWon = winner === "RED";
         const blueWon = winner === "BLUE";
 
-        const redCelebMatches = (updatedMatch.redCeleb?.matchesPlayed || 0) + 1;
-        const redCelebWins =
-          (updatedMatch.redCeleb?.wins || 0) + (redWon ? 1 : 0);
-        const redCelebWinRate = redCelebWins / redCelebMatches;
-
-        const blueCelebMatches =
-          (updatedMatch.blueCeleb?.matchesPlayed || 0) + 1;
-        const blueCelebWins =
-          (updatedMatch.blueCeleb?.wins || 0) + (blueWon ? 1 : 0);
-        const blueCelebWinRate = blueCelebWins / blueCelebMatches;
-
+        const updatedRed = await tx.celebrity.update({
+          where: { id: updatedMatch.redCelebId },
+          data: {
+            matchesPlayed: { increment: 1 },
+            wins: { increment: redWon ? 1 : 0 },
+          },
+        });
         await tx.celebrity.update({
           where: { id: updatedMatch.redCelebId },
           data: {
-            matchesPlayed: redCelebMatches,
-            wins: redCelebWins,
-            winRate: redCelebWinRate,
+            winRate: updatedRed.wins / updatedRed.matchesPlayed,
           },
         });
 
+        const updatedBlue = await tx.celebrity.update({
+          where: { id: updatedMatch.blueCelebId },
+          data: {
+            matchesPlayed: { increment: 1 },
+            wins: { increment: blueWon ? 1 : 0 },
+          },
+        });
         await tx.celebrity.update({
           where: { id: updatedMatch.blueCelebId },
           data: {
-            matchesPlayed: blueCelebMatches,
-            wins: blueCelebWins,
-            winRate: blueCelebWinRate,
+            winRate: updatedBlue.wins / updatedBlue.matchesPlayed,
           },
         });
       }
@@ -1439,7 +1443,7 @@ export async function getMatchState(matchId) {
   }
 
   let liveGameState = null;
-  // 🚨 FIX 3: ALWAYS fetch liveGameState so the client gets phase: "ENDED" properly!
+  // ALWAYS fetch liveGameState so the client gets phase: "ENDED" properly!
   try {
     const gs = await solanaService.fetchGameState(match.gamePda);
     liveGameState = serializeGameState(gs);

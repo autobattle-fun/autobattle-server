@@ -8,6 +8,7 @@ import { startCrankEngine, stopCrankEngine } from "./lib/crank.js";
 import { initWebSocket } from "./lib/websocket.js";
 import { startPriceStream, stopPriceStream } from "./lib/price-stream.js";
 import { startTelegramBot, stopTelegramBot } from "./lib/telegram.js";
+import { solanaService } from "./services/solana.service.js";
 
 async function start(workerId) {
   try {
@@ -32,7 +33,7 @@ async function start(workerId) {
 
   const app = createApp();
 
-  const server = app.listen(env.PORT, () => {
+  const server = app.listen(env.PORT, async () => {
     logger.info("API listening", {
       workerId,
       port: env.PORT,
@@ -48,6 +49,7 @@ async function start(workerId) {
       startPriceStream();
       startTelegramBot();
     }
+    await solanaService.initialize();
   });
 
   const shutdown = async () => {

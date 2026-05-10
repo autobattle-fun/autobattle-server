@@ -5,10 +5,14 @@ import {
   PublicKey,
   SystemProgram,
   ComputeBudgetProgram,
+  AddressLookupTableProgram,
+  TransactionMessage,
+  VersionedTransaction,
 } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
+  createAssociatedTokenAccountInstruction,
 } from "@solana/spl-token";
 import * as sb from "@switchboard-xyz/on-demand";
 import BN from "bn.js";
@@ -65,7 +69,7 @@ class SolanaService {
     this.crankKeypair = Keypair.fromSecretKey(secretKeyArray);
     this.wallet = new anchor.Wallet(this.crankKeypair);
 
-    // 3. Agent Wallets (separate keypairs for Red/Blue agent signing)
+    // 3. Agent Wallets
     const redKeyArray = bs58.decode(env.AGENT_RED_PRIVATE_KEY);
     this.agentRedKeypair = Keypair.fromSecretKey(redKeyArray);
 
@@ -80,14 +84,43 @@ class SolanaService {
 
     // 5. Programs
     this.gameEngine = new anchor.Program(gameEngineIdl, this.provider);
-
     this.predMarket = new anchor.Program(predMarketIdl, this.provider);
 
-    // 6. Switchboard (lazy-initialised)
+    // 6. Persistent Infrastructure State
     this._sbProgram = null;
     this._sbQueue = null;
+    this._lookupTable = null;
+    this._isInitialized = false;
+    this._initPromise = null;
+    this._crankAta = null;
 
-    logger.info("Solana Service initialized", {
+    // Ensure data directory exists for persistent files
+    this.DATA_DIR = env.PERSISTENT_DATA_DIR || "./data";
+    if (!fs.existsSync(this.DATA_DIR)) {
+      fs.mkdirSync(this.DATA_DIR, { recursive: true });
+    }
+
+    // 7. Load or Generate Persistent Randomness Keypair
+    const RNG_PATH = `${this.DATA_DIR}/rng-keypair.json`;
+    if (fs.existsSync(RNG_PATH)) {
+      this._rngKeypair = Keypair.fromSecretKey(
+        Uint8Array.from(JSON.parse(fs.readFileSync(RNG_PATH, "utf8"))),
+      );
+      logger.info("Loaded existing RNG keypair", {
+        pubkey: this._rngKeypair.publicKey.toBase58(),
+      });
+    } else {
+      this._rngKeypair = Keypair.generate();
+      fs.writeFileSync(
+        RNG_PATH,
+        JSON.stringify(Array.from(this._rngKeypair.secretKey)),
+      );
+      logger.info("Generated new RNG keypair", {
+        pubkey: this._rngKeypair.publicKey.toBase58(),
+      });
+    }
+
+    logger.info("Solana Service constructed", {
       crank: this.crankKeypair.publicKey.toBase58(),
       agentRed: this.agentRedKeypair.publicKey.toBase58(),
       agentBlue: this.agentBlueKeypair.publicKey.toBase58(),
@@ -97,62 +130,165 @@ class SolanaService {
   }
 
   /**
-   * Get the keypair for a specific agent color.
-   * @param {"RED" | "BLUE"} player
-   * @returns {Keypair}
+   * Concurrency-safe initialization with error recovery.
    */
+  async initialize() {
+    if (this._isInitialized) return;
+    if (this._initPromise) return this._initPromise;
+
+    this._initPromise = (async () => {
+      try {
+        await this._ensureSwitchboard();
+        if (env.AUTO_TOKEN_ADDRESS) {
+          await this._getCrankAta();
+        }
+        await this._ensureLookupTable();
+
+        this._isInitialized = true;
+        logger.info(
+          "SolanaService fully initialized with persistent infrastructure",
+        );
+      } catch (err) {
+        this._initPromise = null; // Clear cached rejection to allow retries
+        logger.error("Failed to initialize SolanaService infrastructure", {
+          error: err.message,
+        });
+        throw err;
+      }
+    })();
+
+    return this._initPromise;
+  }
+
   getAgentKeypair(player) {
     return player === "RED" ? this.agentRedKeypair : this.agentBlueKeypair;
   }
 
-  // ── Mocking Logic ───────────────────────────────────────────────
+  // ── Persistent Infrastructure Helpers ───────────────────────────
 
-  _getMockGameState(gameId) {
-    if (!this._mockGames) this._mockGames = {};
-    if (!this._mockGames[gameId]) {
-      this._mockGames[gameId] = {
-        gameId: new BN(gameId),
-        agentRed: this.agentRedKeypair.publicKey,
-        agentBlue: this.agentBlueKeypair.publicKey,
-        p1Hp: 10,
-        p2Hp: 10,
-        p1Score: 0,
-        p2Score: 0,
-        p1Aces: 0,
-        p2Aces: 0,
-        p1LastCard: 0,
-        p2LastCard: 0,
-        p1Stayed: false,
-        p2Stayed: false,
-        roundNumber: 1,
-        phase: { awaitingInitialDealVrf: {} },
-        activePlayer: { red: {} },
-        winner: null,
-      };
+  async _ensureAta(mint, owner) {
+    const ata = getAssociatedTokenAddressSync(mint, owner);
+    const info = await this.connection.getAccountInfo(ata);
+    if (!info) {
+      const createAtaIx = createAssociatedTokenAccountInstruction(
+        this.crankKeypair.publicKey,
+        ata,
+        owner,
+        mint,
+      );
+      await this.provider.sendAndConfirm(
+        new anchor.web3.Transaction().add(createAtaIx),
+        [this.crankKeypair],
+      );
+      logger.info("Persistent ATA created", { ata: ata.toBase58() });
     }
-    return this._mockGames[gameId];
+    return ata;
   }
 
-  _generateMockTx() {
-    return "mock_tx_" + Math.random().toString(36).substring(7);
+  async _getCrankAta() {
+    if (this._crankAta) return this._crankAta;
+    const autoMint = new PublicKey(env.AUTO_TOKEN_ADDRESS);
+    this._crankAta = await this._ensureAta(
+      autoMint,
+      this.crankKeypair.publicKey,
+    );
+    return this._crankAta;
   }
 
-  _mockActivePlayer(gs) {
-    return Object.keys(gs.activePlayer || { red: {} })[0]?.toUpperCase() || "RED";
-  }
+  async _ensureLookupTable() {
+    if (this._lookupTable) return this._lookupTable;
 
-  _resetMockRound(gs) {
-    gs.p1Score = 0;
-    gs.p2Score = 0;
-    gs.p1Aces = 0;
-    gs.p2Aces = 0;
-    gs.p1Stayed = false;
-    gs.p2Stayed = false;
-    gs.activePlayer = { red: {} };
-    gs.phase = { awaitingInitialDealVrf: {} };
-  }
+    const ALT_PATH = `${this.DATA_DIR}/lookup-table.json`;
+    const requiredAddresses = [
+      SystemProgram.programId,
+      TOKEN_PROGRAM_ID,
+      GAME_ENGINE_PROGRAM_ID,
+      PRED_MARKET_PROGRAM_ID,
+      this._sbQueue?.pubkey,
+      this._rngKeypair.publicKey,
+    ].filter(Boolean);
 
-  // ── Switchboard Lazy Init ───────────────────────────────────────
+    if (fs.existsSync(ALT_PATH)) {
+      const { address } = JSON.parse(fs.readFileSync(ALT_PATH, "utf8"));
+      const res = await this.connection.getAddressLookupTable(
+        new PublicKey(address),
+      );
+
+      if (res.value) {
+        this._lookupTable = res.value;
+
+        // Check if all expected addresses are present
+        const tableAddresses = res.value.state.addresses.map((a) =>
+          a.toBase58(),
+        );
+        const missing = requiredAddresses.filter(
+          (a) => !tableAddresses.includes(a.toBase58()),
+        );
+
+        if (missing.length > 0) {
+          logger.warn("ALT missing addresses, extending...", {
+            missing: missing.map((a) => a.toBase58()),
+          });
+          const extendIx = AddressLookupTableProgram.extendLookupTable({
+            payer: this.crankKeypair.publicKey,
+            authority: this.crankKeypair.publicKey,
+            lookupTable: res.value.key,
+            addresses: missing,
+          });
+
+          await this.provider.sendAndConfirm(
+            new anchor.web3.Transaction().add(extendIx),
+            [this.crankKeypair],
+          );
+
+          // Wait for extension to propagate, then reload table
+          await new Promise((r) => setTimeout(r, 2000));
+          const updatedRes = await this.connection.getAddressLookupTable(
+            new PublicKey(address),
+          );
+          this._lookupTable = updatedRes.value;
+        }
+
+        logger.info("Loaded existing ALT", { address });
+        return this._lookupTable;
+      }
+    }
+
+    const slot = await this.connection.getSlot();
+    const [createIx, tableAddress] =
+      AddressLookupTableProgram.createLookupTable({
+        authority: this.crankKeypair.publicKey,
+        payer: this.crankKeypair.publicKey,
+        recentSlot: slot,
+      });
+
+    const extendIx = AddressLookupTableProgram.extendLookupTable({
+      payer: this.crankKeypair.publicKey,
+      authority: this.crankKeypair.publicKey,
+      lookupTable: tableAddress,
+      addresses: requiredAddresses,
+    });
+
+    await this.provider.sendAndConfirm(
+      new anchor.web3.Transaction().add(createIx, extendIx),
+      [this.crankKeypair],
+    );
+
+    await new Promise((r) => setTimeout(r, 2000));
+
+    const tableRes = await this.connection.getAddressLookupTable(tableAddress);
+    this._lookupTable = tableRes.value;
+
+    fs.writeFileSync(
+      ALT_PATH,
+      JSON.stringify({ address: tableAddress.toBase58() }),
+    );
+    logger.info("Address lookup table created and saved", {
+      tableAddress: tableAddress.toBase58(),
+    });
+
+    return this._lookupTable;
+  }
 
   async _ensureSwitchboard() {
     if (this._sbProgram) return;
@@ -240,7 +376,6 @@ class SolanaService {
     if (env.MOCK_SOLANA) {
       let gameId = typeof gamePdaOrId === "number" ? gamePdaOrId : null;
       if (!gameId && this._mockGames) {
-        // Fallback to the first mock game if we only have one
         const ids = Object.keys(this._mockGames);
         if (ids.length > 0) gameId = parseInt(ids[0]);
       }
@@ -272,7 +407,6 @@ class SolanaService {
     }
     const [gamePda] = deriveGamePda(gameId);
     const agentKp = this.getAgentKeypair(player);
-
     const colorArg = player === "RED" ? { red: {} } : { blue: {} };
 
     const stayIx = await this.gameEngine.methods
@@ -291,15 +425,15 @@ class SolanaService {
   }
 
   async resolveRound(gameId) {
+    if (env.MOCK_SOLANA) return this._generateMockTx();
+
     const [registryPda] = deriveRegistryPda();
     const [gamePda] = deriveGamePda(gameId);
     const crank = this.crankKeypair.publicKey;
 
-    // Fetch current state to know the round number
     const currentState = await this.gameEngine.account.gameState.fetch(gamePda);
     const currentRound = currentState.roundNumber;
 
-    // Derive BOTH markets to satisfy the new contract requirements
     const [roundMarketPda] = deriveMarketPda(gameId, currentRound);
     const [mainMarketPda] = deriveMarketPda(gameId, 0);
 
@@ -311,8 +445,8 @@ class SolanaService {
         crank: crank,
       })
       .remainingAccounts([
-        { pubkey: roundMarketPda, isWritable: true, isSigner: false }, // index 0 (Round)
-        { pubkey: mainMarketPda, isWritable: true, isSigner: false }, // index 1 (Main)
+        { pubkey: roundMarketPda, isWritable: true, isSigner: false },
+        { pubkey: mainMarketPda, isWritable: true, isSigner: false },
         { pubkey: PRED_MARKET_PROGRAM_ID, isWritable: false, isSigner: false },
       ])
       .rpc();
@@ -320,187 +454,65 @@ class SolanaService {
     logger.info("Round resolved", { gameId, txSig });
     return txSig;
   }
+
   // ── VRF Lifecycle ───────────────────────────────────────────────
 
-  /**
-   * Full VRF lifecycle:
-   * 1. Create randomness account
-   * 2. Commit randomness
-   * 3. Call request_vrf on-chain
-   * 4. Wait for oracle settlement
-   * 5. Reveal randomness
-   * 6. Call fulfill_vrf on-chain
-   */
-  /**
-   * @param {number} gameId
-   * @param {number} rollType - ROLL_TYPE enum value
-   * @param {"RED" | "BLUE"} [agentColor] - Which agent signs the request_vrf.
-   *   For initial deal (type 0), final reveal (type 2), and tiebreaker (type 3),
-   *   the crank signs. For hit (type 1), the active agent signs.
-   */
   async vrfStep(gameId, rollType, agentColor) {
-    if (env.MOCK_SOLANA) {
-      const gs = this._getMockGameState(gameId);
-      // Simulate state changes based on rollType
-      if (rollType === 0) {
-        // INITIAL_DEAL
-        const p1CardValue = Math.floor(Math.random() * 10) + 1;
-        const p2CardValue = Math.floor(Math.random() * 10) + 1;
-        gs.p1LastCard = p1CardValue;
-        gs.p2LastCard = p2CardValue;
-        gs.p1Score = p1CardValue;
-        gs.p2Score = p2CardValue;
-        gs.p1Aces = p1CardValue === 1 ? 1 : 0;
-        gs.p2Aces = p2CardValue === 1 ? 1 : 0;
-        gs.p1Stayed = false;
-        gs.p2Stayed = false;
-        gs.activePlayer = { red: {} };
-        gs.phase = { awaitingAction: {} };
-      } else if (rollType === 1) {
-        // HIT
-        const activePlayer = this._mockActivePlayer(gs);
-        if (agentColor && agentColor !== activePlayer) {
-          throw new Error("NotYourTurn");
-        }
-        const cardVal = Math.floor(Math.random() * 10) + 1;
-        if (activePlayer === "RED") {
-          gs.p1Score += cardVal;
-          gs.p1LastCard = cardVal;
-        } else {
-          gs.p2Score += cardVal;
-          gs.p2LastCard = cardVal;
-        }
-        if (gs.p1Score >= 21) gs.p1Stayed = true;
-        if (gs.p2Score >= 21) gs.p2Stayed = true;
-        if (!(gs.p1Stayed && gs.p2Stayed)) {
-          if (activePlayer === "RED" && !gs.p2Stayed) {
-            gs.activePlayer = { blue: {} };
-          } else if (activePlayer === "BLUE" && !gs.p1Stayed) {
-            gs.activePlayer = { red: {} };
-          }
-        }
-        gs.phase =
-          gs.p1Stayed && gs.p2Stayed
-            ? { awaitingFinalRevealVrf: {} }
-            : { awaitingAction: {} };
-      } else if (rollType === 2) {
-        // FINAL_REVEAL
-        const p1CardValue = Math.floor(Math.random() * 10) + 1;
-        const p2CardValue = Math.floor(Math.random() * 10) + 1;
-        
-        gs.p1LastCard = p1CardValue;
-        gs.p2LastCard = p2CardValue;
-        gs.p1Score += p1CardValue;
-        gs.p2Score += p2CardValue;
+    if (env.MOCK_SOLANA)
+      return this._mockVrfLogic(gameId, rollType, agentColor);
 
-        // Simple win/lose logic for simulation
-        const p1Diff = Math.abs(gs.p1Score - 21);
-        const p2Diff = Math.abs(gs.p2Score - 21);
-        if (p1Diff === p2Diff) {
-          gs.p1Score = 0;
-          gs.p2Score = 0;
-          gs.p1Aces = 0;
-          gs.p2Aces = 0;
-          gs.p1Stayed = false;
-          gs.p2Stayed = false;
-          gs.activePlayer = { red: {} };
-          gs.phase = { awaitingTiebreakerVrf: {} };
-          return this._generateMockTx();
-        } else if (p1Diff < p2Diff) gs.p2Hp -= 1;
-        else gs.p1Hp -= 1;
-
-        if (gs.p1Hp <= 0 || gs.p2Hp <= 0) {
-          gs.phase = { ended: {} };
-        } else {
-          gs.roundNumber += 1;
-          this._resetMockRound(gs);
-        }
-      } else if (rollType === 3) {
-        // TIEBREAKER
-        const p1CardValue = Math.floor(Math.random() * 10) + 1;
-        const p2CardValue = Math.floor(Math.random() * 10) + 1;
-
-        gs.p1LastCard = p1CardValue;
-        gs.p2LastCard = p2CardValue;
-        gs.p1Score += p1CardValue;
-        gs.p2Score += p2CardValue;
-
-        // In tiebreaker, draw until someone wins or just simulate a result
-        if (p1CardValue > p2CardValue) {
-          gs.p2Hp -= 1;
-        } else if (p2CardValue > p1CardValue) {
-          gs.p1Hp -= 1;
-        }
-        // If they are equal, it remains in AWAITING_TIEBREAKER_VRF and loops again
-
-        if (gs.p1Hp <= 0 || gs.p2Hp <= 0) {
-          gs.phase = { ended: {} };
-        } else if (p1CardValue !== p2CardValue) {
-          // Round resolved, next round
-          gs.roundNumber += 1;
-          this._resetMockRound(gs);
-        } else {
-          gs.p1Score = 0;
-          gs.p2Score = 0;
-          gs.p1Aces = 0;
-          gs.p2Aces = 0;
-          gs.p1Stayed = false;
-          gs.p2Stayed = false;
-          gs.activePlayer = { red: {} };
-          gs.phase = { awaitingTiebreakerVrf: {} };
-        }
-      }
-      return this._generateMockTx();
-    }
-    await this._ensureSwitchboard();
+    await this.initialize();
 
     const [gamePda] = deriveGamePda(gameId);
     const [vrfRequestPda] = deriveVrfRequestPda(gameId);
     const crank = this.crankKeypair.publicKey;
+    const microLamports = parseInt(
+      env.COMPUTE_UNIT_PRICE_MICRO_LAMPORTS || "10000",
+      10,
+    );
 
-    // Determine who signs the request_vrf instruction
     const isAgentSigned = rollType === 1 && agentColor;
     const signerKp = isAgentSigned
       ? this.getAgentKeypair(agentColor)
       : this.crankKeypair;
 
-    let rngPubkey;
-
-    // --- FIX: Check if the PDA already exists to prevent "already in use" errors during retries ---
+    let rngPubkey = this._rngKeypair.publicKey;
     const vrfReqInfo = await this.connection.getAccountInfo(vrfRequestPda);
 
     if (vrfReqInfo) {
+      // 🚨 RECOVERY PATH: Trust the on-chain data over our local keypair
       const vrfReqData =
         await this.gameEngine.account.vrfRequest.fetch(vrfRequestPda);
-
-      // The 'consumed' field was removed from the smart contract.
-      // Because `fulfill_vrf` deletes the PDA entirely, if this account still exists,
-      // we know for a fact it is pending and needs to be revealed!
       rngPubkey = vrfReqData.sbAccount;
+
       logger.info(
         "Recovered existing VRF request. Retrying reveal/fulfill...",
-        { gameId, rollType },
+        { gameId, rollType, rngPubkey: rngPubkey.toBase58() },
       );
     } else {
-      // 1. Create randomness account (Normal Flow)
-      const rngKeypair = Keypair.generate();
-      rngPubkey = rngKeypair.publicKey;
+      // 🟢 NORMAL COMMIT PATH
+      const randomnessInfo = await this.connection.getAccountInfo(rngPubkey);
+      const randomness = new sb.Randomness(this._sbProgram, rngPubkey);
 
-      const [randomness, createIx] = await sb.Randomness.create(
-        this._sbProgram,
-        rngKeypair,
-        this._sbQueue.pubkey,
-      );
-
-      await this.provider.sendAndConfirm(
-        new anchor.web3.Transaction().add(
-          ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+      // 1. Create randomness account ON-CHAIN explicitly if it doesn't exist
+      if (!randomnessInfo) {
+        logger.info("Initializing persistent Randomness account on-chain...");
+        const [_, createIx] = await sb.Randomness.create(
+          this._sbProgram,
+          this._rngKeypair,
+          this._sbQueue.pubkey,
+        );
+        const createTx = new anchor.web3.Transaction().add(
+          ComputeBudgetProgram.setComputeUnitLimit({ units: 100_000 }),
+          ComputeBudgetProgram.setComputeUnitPrice({ microLamports }),
           createIx,
-        ),
-        [rngKeypair],
-      );
+        );
+        await this.provider.sendAndConfirm(createTx, [this._rngKeypair]);
+        logger.info("Persistent Randomness account created successfully.");
+      }
 
-      // 2. Commit + Request VRF (atomic)
+      // 2. Commit + Request VRF
+      // Now safe to call commitIx because the account definitely exists
       const commitIx = await randomness.commitIx(this._sbQueue.pubkey);
       const reqIx = await this.gameEngine.methods
         .requestVrf(rollType)
@@ -513,29 +525,58 @@ class SolanaService {
         })
         .instruction();
 
-      const commitTx = new anchor.web3.Transaction().add(commitIx, reqIx);
-      // Include agent keypair as additional signer if it's not the crank
-      const commitSigners = isAgentSigned ? [signerKp] : [];
-      await this.provider.sendAndConfirm(commitTx, commitSigners);
+      const ixs = [
+        ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports }),
+        commitIx,
+        reqIx,
+      ];
+
+      const { blockhash, lastValidBlockHeight } =
+        await this.connection.getLatestBlockhash();
+      const message = new TransactionMessage({
+        payerKey: this.crankKeypair.publicKey,
+        recentBlockhash: blockhash,
+        instructions: ixs,
+      }).compileToV0Message([this._lookupTable]);
+
+      const tx = new VersionedTransaction(message);
+
+      const signers = [this.crankKeypair];
+      if (isAgentSigned) signers.push(signerKp);
+
+      tx.sign(signers);
+
+      const commitSig = await this.connection.sendTransaction(tx);
+
+      await this.connection.confirmTransaction(
+        {
+          signature: commitSig,
+          blockhash,
+          lastValidBlockHeight,
+        },
+        "confirmed",
+      );
     }
 
-    // 3. Wait for oracle to settle
+    // Give Switchboard Oracle time to fulfill the randomness locally
     await this._sleep(VRF_SETTLE_DELAY_MS);
 
-    // 4. Reveal + Fulfill (atomic)
-    // Instantiate the randomness object using the pubkey we either created or recovered
+    // 🟢 REVEAL + FULFILL PATH
     const randomness = new sb.Randomness(this._sbProgram, rngPubkey);
 
     let revealIx;
     try {
       revealIx = await randomness.revealIx();
     } catch (error) {
-      if (error.isAxiosError || error.name === 'AxiosError') {
+      if (error.isAxiosError || error.name === "AxiosError") {
         try {
           const data = await randomness.loadData();
           const oracle = new sb.Oracle(this._sbProgram, data.oracle);
           const oracleData = await oracle.loadData();
-          const gatewayUrl = String.fromCharCode(...oracleData.gatewayUri).replace(/\0+$/, "");
+          const gatewayUrl = String.fromCharCode(
+            ...oracleData.gatewayUri,
+          ).replace(/\0+$/, "");
 
           const errorDetails = {
             randomnessAccount: rngPubkey.toBase58(),
@@ -545,13 +586,16 @@ class SolanaService {
             status: error.response?.status,
             responseBody: error.response?.data,
             configUrl: error.config?.url,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
           };
 
           logger.error("Switchboard VRF Reveal Error details", errorDetails);
           error.message = `Switchboard VRF Reveal Error: ${error.message}\nDetails: ${JSON.stringify(errorDetails, null, 2)}`;
         } catch (innerErr) {
-          logger.error("Failed to load Switchboard metadata for error decoration", { err: innerErr.message });
+          logger.error(
+            "Failed to load Switchboard metadata for error decoration",
+            { err: innerErr.message },
+          );
         }
       }
       throw error;
@@ -568,19 +612,19 @@ class SolanaService {
       })
       .instruction();
 
-    const tx = new anchor.web3.Transaction().add(revealIx, fillIx);
+    const finalIxs = [
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports }),
+      revealIx,
+      fillIx,
+    ];
 
-    // --- MEV BOT PROTECTION: ATOMIC RESOLUTION ---
-    // If this is the Final Reveal (2) or Tiebreaker (3), immediately bundle the resolve command
     if (rollType === 2 || rollType === 3) {
       const [registryPda] = deriveRegistryPda();
-
-      // Fetch the current round number before the contract increments it
       const currentState =
         await this.gameEngine.account.gameState.fetch(gamePda);
       const currentRound = currentState.roundNumber;
 
-      // Derive BOTH markets
       const [roundMarketPda] = deriveMarketPda(gameId, currentRound);
       const [mainMarketPda] = deriveMarketPda(gameId, 0);
 
@@ -592,8 +636,8 @@ class SolanaService {
           crank: crank,
         })
         .remainingAccounts([
-          { pubkey: roundMarketPda, isWritable: true, isSigner: false }, // index 0 (Round)
-          { pubkey: mainMarketPda, isWritable: true, isSigner: false }, // index 1 (Main)
+          { pubkey: roundMarketPda, isWritable: true, isSigner: false },
+          { pubkey: mainMarketPda, isWritable: true, isSigner: false },
           {
             pubkey: PRED_MARKET_PROGRAM_ID,
             isWritable: false,
@@ -602,10 +646,31 @@ class SolanaService {
         ])
         .instruction();
 
-      tx.add(resolveIx);
+      finalIxs.push(resolveIx);
     }
 
-    const txSig = await this.provider.sendAndConfirm(tx);
+    const { blockhash: revealBlockhash, lastValidBlockHeight: revealLbh } =
+      await this.connection.getLatestBlockhash();
+    const revealMsg = new TransactionMessage({
+      payerKey: this.crankKeypair.publicKey,
+      recentBlockhash: revealBlockhash,
+      instructions: finalIxs,
+    }).compileToV0Message([this._lookupTable]);
+
+    const revealTx = new VersionedTransaction(revealMsg);
+    revealTx.sign([this.crankKeypair]);
+
+    const txSig = await this.connection.sendTransaction(revealTx);
+
+    await this.connection.confirmTransaction(
+      {
+        signature: txSig,
+        blockhash: revealBlockhash,
+        lastValidBlockHeight: revealLbh,
+      },
+      "confirmed",
+    );
+
     logger.info("VRF step complete", { gameId, rollType, agentColor, txSig });
     return txSig;
   }
@@ -614,16 +679,13 @@ class SolanaService {
 
   async createOnChainMarket(gameId, marketIndex, question, expiresAtUnix) {
     if (env.MOCK_SOLANA) return this._generateMockTx();
+    await this.initialize();
+
     const [marketPda] = deriveMarketPda(gameId, marketIndex);
     const [vaultPda] = deriveVaultPda(gameId, marketIndex);
     const crank = this.crankKeypair.publicKey;
 
-    const autoMint = env.AUTO_TOKEN_ADDRESS
-      ? new PublicKey(env.AUTO_TOKEN_ADDRESS)
-      : crank; // Fallback for testing (see test.controller.js pattern)
-
-    // --- NEW: Derive the Crank's Token Account ---
-    const creatorTokenAccount = getAssociatedTokenAddressSync(autoMint, crank);
+    const creatorTokenAccount = await this._getCrankAta();
 
     const txSig = await this.predMarket.methods
       .createMarket(
@@ -635,8 +697,8 @@ class SolanaService {
       .accounts({
         market: marketPda,
         vault: vaultPda,
-        autoMint: autoMint,
-        creatorTokenAccount: creatorTokenAccount, // <-- NEW: Add the LP source
+        autoMint: new PublicKey(env.AUTO_TOKEN_ADDRESS),
+        creatorTokenAccount: creatorTokenAccount,
         authority: crank,
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
@@ -662,20 +724,17 @@ class SolanaService {
 
   async retrieveLp(marketPdaAddress, vaultPdaAddress) {
     if (env.MOCK_SOLANA) return this._generateMockTx();
+    await this.initialize();
+
     const crank = this.crankKeypair.publicKey;
-
-    const autoMint = env.AUTO_TOKEN_ADDRESS
-      ? new PublicKey(env.AUTO_TOKEN_ADDRESS)
-      : crank; // Fallback for testing
-
-    const creatorTokenAccount = getAssociatedTokenAddressSync(autoMint, crank);
+    const adminTokenAccount = await this._getCrankAta();
 
     const txSig = await this.predMarket.methods
       .withdrawLp()
       .accounts({
         market: new PublicKey(marketPdaAddress),
         vault: new PublicKey(vaultPdaAddress),
-        adminTokenAccount: creatorTokenAccount,
+        adminTokenAccount: adminTokenAccount,
         authority: crank,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
@@ -686,10 +745,144 @@ class SolanaService {
     return txSig;
   }
 
-  // ── Helpers ─────────────────────────────────────────────────────
+  // ── Internal Helpers & Mock Simulation ──────────────────────────
 
   _sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  _generateMockTx() {
+    return "mock_" + Math.random().toString(36).slice(2);
+  }
+
+  _getMockGameState(gameId) {
+    if (!this._mockGames) this._mockGames = {};
+    if (!this._mockGames[gameId]) {
+      this._mockGames[gameId] = {
+        gameId: new BN(gameId),
+        agentRed: this.agentRedKeypair.publicKey,
+        agentBlue: this.agentBlueKeypair.publicKey,
+        p1Hp: 10,
+        p2Hp: 10,
+        p1Score: 0,
+        p2Score: 0,
+        p1Aces: 0,
+        p2Aces: 0,
+        p1LastCard: 0,
+        p2LastCard: 0,
+        p1Stayed: false,
+        p2Stayed: false,
+        roundNumber: 1,
+        phase: { awaitingInitialDeal: {} }, // Anchor enum struct match
+        activePlayer: { red: {} },
+        winner: null,
+      };
+    }
+    return this._mockGames[gameId];
+  }
+
+  _mockActivePlayer(gs) {
+    return (
+      Object.keys(gs.activePlayer || { red: {} })[0]?.toUpperCase() || "RED"
+    );
+  }
+
+  _resetMockRound(gs) {
+    gs.p1Score = 0;
+    gs.p2Score = 0;
+    gs.p1Aces = 0;
+    gs.p2Aces = 0;
+    gs.p1Stayed = false;
+    gs.p2Stayed = false;
+    gs.activePlayer = { red: {} };
+    gs.phase = { awaitingInitialDeal: {} };
+  }
+
+  _mockVrfLogic(gameId, rollType, agentColor) {
+    const gs = this._getMockGameState(gameId);
+    if (rollType === 0) {
+      const p1CardValue = Math.floor(Math.random() * 10) + 1;
+      const p2CardValue = Math.floor(Math.random() * 10) + 1;
+      gs.p1LastCard = p1CardValue;
+      gs.p2LastCard = p2CardValue;
+      gs.p1Score = p1CardValue;
+      gs.p2Score = p2CardValue;
+      gs.p1Aces = p1CardValue === 1 ? 1 : 0;
+      gs.p2Aces = p2CardValue === 1 ? 1 : 0;
+      gs.p1Stayed = false;
+      gs.p2Stayed = false;
+      gs.activePlayer = { red: {} };
+      gs.phase = { awaitingAction: {} };
+    } else if (rollType === 1) {
+      const activePlayer = this._mockActivePlayer(gs);
+      if (agentColor && agentColor !== activePlayer)
+        throw new Error("NotYourTurn");
+      const cardVal = Math.floor(Math.random() * 10) + 1;
+      if (activePlayer === "RED") {
+        gs.p1Score += cardVal;
+        gs.p1LastCard = cardVal;
+      } else {
+        gs.p2Score += cardVal;
+        gs.p2LastCard = cardVal;
+      }
+      if (gs.p1Score >= 21) gs.p1Stayed = true;
+      if (gs.p2Score >= 21) gs.p2Stayed = true;
+      if (!(gs.p1Stayed && gs.p2Stayed)) {
+        if (activePlayer === "RED" && !gs.p2Stayed)
+          gs.activePlayer = { blue: {} };
+        else if (activePlayer === "BLUE" && !gs.p1Stayed)
+          gs.activePlayer = { red: {} };
+      }
+      gs.phase =
+        gs.p1Stayed && gs.p2Stayed
+          ? { awaitingFinalRevealVrf: {} }
+          : { awaitingAction: {} };
+    } else if (rollType === 2 || rollType === 3) {
+      const p1CardValue = Math.floor(Math.random() * 10) + 1;
+      const p2CardValue = Math.floor(Math.random() * 10) + 1;
+
+      gs.p1LastCard = p1CardValue;
+      gs.p2LastCard = p2CardValue;
+      gs.p1Score += p1CardValue;
+      gs.p2Score += p2CardValue;
+
+      if (rollType === 2) {
+        const p1Diff = Math.abs(gs.p1Score - 21);
+        const p2Diff = Math.abs(gs.p2Score - 21);
+        if (p1Diff === p2Diff) {
+          gs.p1Score = 0;
+          gs.p2Score = 0;
+          gs.p1Aces = 0;
+          gs.p2Aces = 0;
+          gs.p1Stayed = false;
+          gs.p2Stayed = false;
+          gs.activePlayer = { red: {} };
+          gs.phase = { awaitingTiebreakerVrf: {} };
+          return this._generateMockTx();
+        } else if (p1Diff < p2Diff) gs.p2Hp -= 1;
+        else gs.p1Hp -= 1;
+      } else {
+        if (p1CardValue > p2CardValue) gs.p2Hp -= 1;
+        else if (p2CardValue > p1CardValue) gs.p1Hp -= 1;
+      }
+
+      if (gs.p1Hp <= 0 || gs.p2Hp <= 0) {
+        gs.phase = { ended: {} };
+      } else if (rollType === 2 || p1CardValue !== p2CardValue) {
+        gs.roundNumber += 1;
+        this._resetMockRound(gs);
+      } else {
+        gs.p1Score = 0;
+        gs.p2Score = 0;
+        gs.p1Aces = 0;
+        gs.p2Aces = 0;
+        gs.p1Stayed = false;
+        gs.p2Stayed = false;
+        gs.activePlayer = { red: {} };
+        gs.phase = { awaitingTiebreakerVrf: {} };
+      }
+    }
+    return this._generateMockTx();
   }
 }
 
