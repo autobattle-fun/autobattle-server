@@ -12,15 +12,14 @@ import {
   getGameState,
   updateGameState,
   syncOnChainState,
-  recordCardDealt,
-  recordRiverCards,
-  recordTiebreakerCards,
-  recordMove,
+  mutateGameState,
+  applyOnChainState,
   archiveRound,
   deleteGameState,
   inferCard,
   formatCardHistory,
   calculateScoreFromCards,
+  displayScoreForPlayer,
   setMatchBreakCountdown,
   clearMatchBreakCountdown,
   addMatchLog,
@@ -368,22 +367,23 @@ export async function playRound(matchId) {
 
   // Infer initial cards from scores (each player gets 1 card)
   const { score: redCalcScoreInit } = calculateScoreFromCards(state.red.cards);
-  const redInitCard = inferCard(0, gs.p1Score, 0, gs.p1Aces);
-  if (redCalcScoreInit === 0 && gs.p1Score > 0) {
-    await recordCardDealt(gameId, "RED", redInitCard);
-  }
+  const redInitCard = inferCard(0, gs.p1Score, 0, gs.p1Aces, gs.p1LastCard);
 
   const { score: blueCalcScoreInit } = calculateScoreFromCards(state.blue.cards);
-  const blueInitCard = inferCard(0, gs.p2Score, 0, gs.p2Aces);
-  if (blueCalcScoreInit === 0 && gs.p2Score > 0) {
-    await recordCardDealt(gameId, "BLUE", blueInitCard);
-  }
-  await syncOnChainState(gameId, gs, parseGamePhase(gs.phase));
+  const blueInitCard = inferCard(0, gs.p2Score, 0, gs.p2Aces, gs.p2LastCard);
+  state = await mutateGameState(gameId, (draft) => {
+    if (redCalcScoreInit === 0 && gs.p1Score > 0) {
+      draft.red.cards.push(redInitCard);
+    }
+    if (blueCalcScoreInit === 0 && gs.p2Score > 0) {
+      draft.blue.cards.push(blueInitCard);
+    }
+    return applyOnChainState(draft, gs, parseGamePhase(gs.phase));
+  });
 
   const redScoreInit = gs.p1Score;
   const blueScoreInit = gs.p2Score;
 
-  state = await getGameState(gameId);
   const currentPrices = getCurrentMarketPrices(matchId);
   const market = Object.keys(currentPrices).length > 0 ? currentPrices : null;
 
@@ -455,10 +455,13 @@ export async function playRound(matchId) {
     gs.p2Aces,
     gs.p2LastCard,
   );
-  await recordRiverCards(gameId, riverRedCard, riverBlueCard);
-  await syncOnChainState(gameId, gs, parseGamePhase(gs.phase));
-
-  state = await getGameState(gameId);
+  state = await mutateGameState(gameId, (draft) => {
+    draft.riverRed = riverRedCard;
+    draft.riverBlue = riverBlueCard;
+    draft.red.cards.push(riverRedCard);
+    draft.blue.cards.push(riverBlueCard);
+    return applyOnChainState(draft, gs, parseGamePhase(gs.phase));
+  });
   wsEvents.riverFlowing(
     {
       playerStatus: state?.playerStatus || { red: "WAITING", blue: "WAITING" },
@@ -567,16 +570,19 @@ export async function playRound(matchId) {
       gs.p2Aces,
       gs.p2LastCard,
     );
-    await recordTiebreakerCards(gameId, tbRedCard, tbBlueCard);
-
-    state = await getGameState(gameId);
+    state = await mutateGameState(gameId, (draft) => {
+      draft.tiebreakerCards.push({ red: tbRedCard, blue: tbBlueCard });
+      draft.red.cards.push(tbRedCard);
+      draft.blue.cards.push(tbBlueCard);
+      return applyOnChainState(draft, gs, parseGamePhase(gs.phase));
+    });
     wsEvents.tiebreakerResolved(
       {
         playerStatus: {
           red: "WAITING",
           blue: "WAITING",
         },
-        phase: parseGamePhase(gs.phase),
+        phase: "ROUND_RESOLVED",
         red: buildPlayerState(gs, state, match, "RED"),
         blue: buildPlayerState(gs, state, match, "BLUE"),
       },
@@ -699,7 +705,7 @@ export async function playRound(matchId) {
   wsEvents.roundResolved(
     {
       playerStatus: { red: "WAITING", blue: "WAITING" },
-      phase,
+      phase: "ROUND_RESOLVED",
       red: buildPlayerState(gs, state, match, "RED"),
       blue: buildPlayerState(gs, state, match, "BLUE"),
     },
@@ -769,10 +775,17 @@ export async function playRound(matchId) {
 // ── Agent Turns ─────────────────────────────────────────────────────
 
 async function runAgentTurns(gameId, initialGs, match) {
-  let currentPlayer = "RED";
+  let latestGs = initialGs;
+  let currentPlayer = parseColor(latestGs.activePlayer) || "RED";
   let state = await getGameState(gameId);
 
   while (!state.red.stayed || !state.blue.stayed) {
+    currentPlayer = parseColor(latestGs.activePlayer) || currentPlayer;
+    if (currentPlayer === "RED" && state.red.stayed && !state.blue.stayed) {
+      currentPlayer = "BLUE";
+    } else if (currentPlayer === "BLUE" && state.blue.stayed && !state.red.stayed) {
+      currentPlayer = "RED";
+    }
     // Bail out if match was paused (e.g. by a failed withRetry in a concurrent path)
     const currentMatch = await prisma.match.findUnique({
       where: { id: match.id },
@@ -791,14 +804,13 @@ async function runAgentTurns(gameId, initialGs, match) {
         await runSingleAgentTurn(gameId, "RED", match);
         state = await getGameState(gameId);
       }
-      currentPlayer = "BLUE";
     } else {
       if (!state.blue.stayed) {
         await runSingleAgentTurn(gameId, "BLUE", match);
         state = await getGameState(gameId);
       }
-      currentPlayer = "RED";
     }
+    latestGs = await solanaService.fetchGameState(gameId);
   }
 }
 
@@ -808,6 +820,10 @@ async function runSingleAgentTurn(gameId, player, match) {
 
   let state = await getGameState(gameId);
   let gs = await solanaService.fetchGameState(gameId);
+  state =
+    (await mutateGameState(gameId, (draft) =>
+      applyOnChainState(draft, gs, parseGamePhase(gs.phase)),
+    )) || state;
 
   // Auto-heal missing cards (if a transaction succeeded on-chain but we crashed before saving to Redis)
   // const { score: redCalcScore, aces: redCalcAces } = calculateScoreFromCards(state.red.cards);
@@ -850,12 +866,10 @@ async function runSingleAgentTurn(gameId, player, match) {
 
   if (myStayed) {
     // Auto-heal Redis if it fell out of sync due to an RPC timeout
-    const freshState = await getGameState(gameId);
-    await updateGameState(gameId, {
-      [player.toLowerCase()]: {
-        ...freshState[player.toLowerCase()],
-        stayed: true,
-      },
+    await mutateGameState(gameId, (draft) => {
+      applyOnChainState(draft, gs, parseGamePhase(gs.phase));
+      draft[player.toLowerCase()].stayed = true;
+      return draft;
     });
     return;
   }
@@ -863,6 +877,7 @@ async function runSingleAgentTurn(gameId, player, match) {
   {
     const oppPlayer = isRed ? "blue" : "red";
     state = await updateGameState(gameId, {
+      activePlayer: player,
       playerStatus: {
         [player.toLowerCase()]: "THINKING",
         [oppPlayer]: "WAITING",
@@ -901,6 +916,7 @@ async function runSingleAgentTurn(gameId, player, match) {
     );
 
     state = await updateGameState(gameId, {
+      activePlayer: player,
       playerStatus: {
         ...state.playerStatus,
         [player.toLowerCase()]: "TXPENDING",
@@ -962,20 +978,8 @@ async function runSingleAgentTurn(gameId, player, match) {
       const newAces = isRed ? updated.p1Aces : updated.p2Aces;
       const rawCardValue = isRed ? updated.p1LastCard : updated.p2LastCard;
 
-      // --- SANITIZATION ---
-      // Check if hitting forced a stay (score >= 21)
       const contractStayed = isRed ? updated.p1Stayed : updated.p2Stayed;
-
-      if (contractStayed) {
-        const freshState = await getGameState(gameId);
-        state = await updateGameState(gameId, {
-          [isRed ? "red" : "blue"]: {
-            ...freshState[isRed ? "red" : "blue"],
-            stayed: true,
-          },
-        });
-        myStayed = true;
-      }
+      myStayed = contractStayed;
 
       let card;
       if (rawCardValue) {
@@ -990,43 +994,41 @@ async function runSingleAgentTurn(gameId, player, match) {
       } else {
         card = inferCard(myScore, newScore, myAces, newAces);
       }
-      await recordCardDealt(gameId, player, card);
-
-      await recordMove(gameId, {
-        player,
-        action: "HIT",
-        reason,
-        model,
-        scoreBefore,
-        scoreAfter: newScore,
-        cardDealt: card,
-        txSignature: txSig,
+      state = await mutateGameState(gameId, (draft) => {
+        const side = player.toLowerCase();
+        applyOnChainState(draft, updated, parseGamePhase(updated.phase));
+        draft[side].cards.push(card);
+        draft.moveCounter++;
+        draft.moves.push({
+          player,
+          action: "HIT",
+          reason,
+          model,
+          scoreBefore,
+          scoreAfter: newScore,
+          cardDealt: card,
+          txSignature: txSig,
+          moveNumber: draft.moveCounter,
+        });
+        draft.playerStatus = {
+          ...draft.playerStatus,
+          [side]: myStayed ? "FINALIZED" : "DONE",
+        };
+        return draft;
       });
 
       myScore = newScore;
       myAces = newAces;
       oppScore = isRed ? updated.p2Score : updated.p1Score;
 
-      state = await updateGameState(gameId, {
-        playerStatus: {
-          ...state.playerStatus,
-          [player.toLowerCase()]: myStayed ? "FINALIZED" : "DONE",
-        },
-      });
-
-      state = await getGameState(gameId);
       wsEvents.agentDecision(
         {
           playerStatus: state?.playerStatus || {
             red: "WAITING",
             blue: "WAITING",
           },
-          ...(myStayed || newScore !== scoreBefore
-            ? {
-              red: buildPlayerState(updated, state, match, "RED", player, reason),
-              blue: buildPlayerState(updated, state, match, "BLUE", player, reason),
-            }
-            : {}),
+          red: buildPlayerState(updated, state, match, "RED", player, reason),
+          blue: buildPlayerState(updated, state, match, "BLUE", player, reason),
         },
         match.id,
       );
@@ -1037,15 +1039,20 @@ async function runSingleAgentTurn(gameId, player, match) {
       );
 
       if (myStayed) {
-        await recordMove(gameId, {
-          player,
-          action: "FORCED_STAY",
-          reason: "Score >= 21, forced by contract",
-          model,
-          scoreBefore: newScore,
-          scoreAfter: newScore,
-          cardDealt: null,
-          txSignature: null,
+        state = await mutateGameState(gameId, (draft) => {
+          draft.moveCounter++;
+          draft.moves.push({
+            player,
+            action: "FORCED_STAY",
+            reason: "Score >= 21, forced by contract",
+            model,
+            scoreBefore: newScore,
+            scoreAfter: newScore,
+            cardDealt: null,
+            txSignature: null,
+            moveNumber: draft.moveCounter,
+          });
+          return draft;
         });
         wsEvents.agentDecision(
           {
@@ -1059,8 +1066,6 @@ async function runSingleAgentTurn(gameId, player, match) {
           match.id,
         );
       }
-
-      await syncOnChainState(gameId, updated, parseGamePhase(updated.phase));
     } else {
       const txSig = await withRetry(() => solanaService.stay(gameId, player), {
         label: `stay:${player}`,
@@ -1068,33 +1073,31 @@ async function runSingleAgentTurn(gameId, player, match) {
         gameId,
       });
 
-      const freshState = await getGameState(gameId);
-      state = await updateGameState(gameId, {
-        [isRed ? "red" : "blue"]: {
-          ...freshState[isRed ? "red" : "blue"],
-          stayed: true,
-        },
-        playerStatus: {
-          ...freshState.playerStatus,
-          [player.toLowerCase()]: "WAITING",
-        },
-      });
-
-      await recordMove(gameId, {
-        player,
-        action: "STAY",
-        reason,
-        model,
-        scoreBefore,
-        scoreAfter: scoreBefore,
-        cardDealt: null,
-        txSignature: txSig,
-      });
-
       await new Promise((r) => setTimeout(r, env.MOCK_SOLANA ? 100 : MOVE_DELAY_MS));
 
-      state = await getGameState(gameId);
       const latestGs = await solanaService.fetchGameState(gameId);
+      state = await mutateGameState(gameId, (draft) => {
+        const side = player.toLowerCase();
+        applyOnChainState(draft, latestGs, parseGamePhase(latestGs.phase));
+        draft[side].stayed = true;
+        draft.playerStatus = {
+          ...draft.playerStatus,
+          [side]: "WAITING",
+        };
+        draft.moveCounter++;
+        draft.moves.push({
+          player,
+          action: "STAY",
+          reason,
+          model,
+          scoreBefore,
+          scoreAfter: scoreBefore,
+          cardDealt: null,
+          txSignature: txSig,
+          moveNumber: draft.moveCounter,
+        });
+        return draft;
+      });
       wsEvents.agentDecision(
         {
           playerStatus: state?.playerStatus || {
@@ -1618,11 +1621,10 @@ function serializeGameState(gs) {
 function buildPlayerState(gs, redisState, match, color, activePlayerColor = null, activeReason = null) {
   const isRed = color === "RED";
   const cards = isRed ? redisState?.red?.cards || [] : redisState?.blue?.cards || [];
-  let score = isRed ? gs.p1Score : gs.p2Score;
-
-  if (score === 0 && cards.length > 0) {
-    score = calculateScoreFromCards(cards).score;
-  }
+  const score = displayScoreForPlayer({
+    score: isRed ? gs.p1Score : gs.p2Score,
+    cards,
+  });
 
   return {
     hp: isRed ? gs.p1Hp : gs.p2Hp,

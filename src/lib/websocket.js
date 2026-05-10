@@ -2,7 +2,7 @@ import { Server as SocketIOServer } from "socket.io";
 import { env } from "../config/env.js";
 import { logger } from "./logger.js";
 import { prisma } from "../db/prisma.js";
-import { getGameState, getMatchBreakCountdown, calculateScoreFromCards } from "./game-state-store.js";
+import { getGameState, getMatchBreakCountdown, displayScoreForPlayer } from "./game-state-store.js";
 import {
   addRoundSystemLog,
   getRoundSystemLogs,
@@ -203,27 +203,23 @@ export async function getFullGameState(matchId) {
         red: "WAITING",
         blue: "WAITING",
       },
-      roundNumber: activeMatch.roundNumber,
-      redHp: activeMatch.redHp,
-      blueHp: activeMatch.blueHp,
+      roundNumber: redisState?.roundNumber ?? activeMatch.roundNumber,
+      redHp: redisState?.red?.hp ?? activeMatch.redHp,
+      blueHp: redisState?.blue?.hp ?? activeMatch.blueHp,
       red: {
-        hp: activeMatch.redHp,
+        hp: redisState?.red?.hp ?? activeMatch.redHp,
         name: activeMatch.redName,
         llm: activeMatch.llmRed,
-        score: (redisState?.red?.score || 0) === 0 && (redisState?.red?.cards || []).length > 0
-          ? calculateScoreFromCards(redisState.red.cards).score
-          : (redisState?.red?.score || 0),
+        score: displayScoreForPlayer(redisState?.red),
         stayed: redisState?.red?.stayed || false,
         cards: redisState?.red?.cards || [],
         celebrity: activeMatch.redCeleb,
       },
       blue: {
-        hp: activeMatch.blueHp,
+        hp: redisState?.blue?.hp ?? activeMatch.blueHp,
         name: activeMatch.blueName,
         llm: activeMatch.llmBlue,
-        score: (redisState?.blue?.score || 0) === 0 && (redisState?.blue?.cards || []).length > 0
-          ? calculateScoreFromCards(redisState.blue.cards).score
-          : (redisState?.blue?.score || 0),
+        score: displayScoreForPlayer(redisState?.blue),
         stayed: redisState?.blue?.stayed || false,
         cards: redisState?.blue?.cards || [],
         celebrity: activeMatch.blueCeleb,
@@ -401,7 +397,9 @@ function makeEnvelope(eventType, payload, matchId) {
 function emitToRooms(eventType, envelope, matchId) {
   if (!io) return;
 
-  logWsEvent("SENT", eventType, envelope, matchId);
+  if (eventType !== "log:broadcast") {
+    logWsEvent("SENT", eventType, envelope, matchId);
+  }
 
   if (matchId) {
     io.to(matchId).to("global").emit(eventType, envelope);
@@ -418,20 +416,20 @@ export async function broadcast(eventType, payload, matchId, sendGameState = tru
   if (!io) return;
 
   let finalPayload = payload;
-  const countdown = getMatchBreakCountdown();
+  const countdown = await getMatchBreakCountdown();
   finalPayload = { ...finalPayload, countdown };
 
   if (matchId && payload && typeof payload === "object" && !payload.gameState && sendGameState) {
     try {
       const gameState = await getFullGameState(matchId);
 
-      if (eventType === "round:resolved" || eventType === "tiebreaker:resolved") {
+      if (gameState && (eventType === "round:resolved" || eventType === "tiebreaker:resolved")) {
         gameState.phase = "ROUND_RESOLVED";
       }
-      if (eventType === "agent:decision" && payload.red.reason) {
+      if (gameState && eventType === "agent:decision" && payload.red?.reason) {
         gameState.red.reason = payload.red.reason;
       }
-      if (eventType === "agent:decision" && payload.blue.reason) {
+      if (gameState && eventType === "agent:decision" && payload.blue?.reason) {
         gameState.blue.reason = payload.blue.reason;
       }
 
@@ -458,18 +456,18 @@ export async function broadcast(eventType, payload, matchId, sendGameState = tru
  * Broadcast a game event to WebSocket clients only (no Telegram).
  * Used for high-frequency events like market price updates.
  */
-export async function broadcastNoTelegram(eventType, payload, matchId) {
+export async function broadcastNoTelegram(eventType, payload, matchId, sendGameState = true) {
   if (!io) return;
 
   let finalPayload = payload;
-  const countdown = getMatchBreakCountdown();
+  const countdown = await getMatchBreakCountdown();
   finalPayload = { ...finalPayload, countdown };
 
-  if (matchId && payload && typeof payload === "object" && !payload.gameState) {
+  if (matchId && payload && typeof payload === "object" && !payload.gameState && sendGameState) {
     try {
       const gameState = await getFullGameState(matchId);
 
-      if (eventType === "round:resolved" || eventType === "tiebreaker:resolved") {
+      if (gameState && (eventType === "round:resolved" || eventType === "tiebreaker:resolved")) {
         gameState.phase = "ROUND_RESOLVED";
       }
 
@@ -541,7 +539,7 @@ export const wsEvents = {
   },
 
   marketPrices(matchId, prices) {
-    broadcastNoTelegram("market:prices", prices, matchId);
+    broadcastNoTelegram("market:prices", prices, matchId, false);
   },
 
   logBroadcast(role, log, matchId, sendGameState = true) {
@@ -553,7 +551,7 @@ export const wsEvents = {
         timeStamp: Date.now(),
       },
       matchId,
-      sendGameState,
+      false,
     );
 
     addRoundSystemLog(matchId, role, log);

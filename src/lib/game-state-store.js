@@ -39,6 +39,64 @@ function stateKey(gameId) {
   return `${KEY_PREFIX}:${gameId}:state`;
 }
 
+function parseOnChainColor(color) {
+  if (!color) return null;
+  if (typeof color === "string") return color.toUpperCase();
+  const key = Object.keys(color)[0];
+  return key ? key.toUpperCase() : null;
+}
+
+export function applyOnChainState(state, onChainState, phase) {
+  state.red.score = onChainState.p1Score;
+  state.red.hp = onChainState.p1Hp;
+  state.red.aces = onChainState.p1Aces;
+  state.red.stayed = onChainState.p1Stayed;
+
+  state.blue.score = onChainState.p2Score;
+  state.blue.hp = onChainState.p2Hp;
+  state.blue.aces = onChainState.p2Aces;
+  state.blue.stayed = onChainState.p2Stayed;
+
+  state.phase = phase;
+  state.roundNumber = onChainState.roundNumber;
+  state.activePlayer =
+    parseOnChainColor(onChainState.activePlayer) || state.activePlayer || "RED";
+
+  return state;
+}
+
+export function displayScoreForPlayer(playerState = {}) {
+  const cards = playerState.cards || [];
+  if (cards.length > 0) {
+    return calculateScoreFromCards(cards).score;
+  }
+  return playerState.score || 0;
+}
+
+export function resetCurrentRoundState(state, roundSummary = null) {
+  if (roundSummary) {
+    state.pastRounds.push(roundSummary);
+  }
+
+  state.red.cards = [];
+  state.blue.cards = [];
+  state.red.score = 0;
+  state.blue.score = 0;
+  state.red.aces = 0;
+  state.blue.aces = 0;
+  state.red.stayed = false;
+  state.blue.stayed = false;
+  state.riverRed = null;
+  state.riverBlue = null;
+  state.tiebreakerCards = [];
+  state.moves = [];
+  state.moveCounter = 0;
+  state.activePlayer = "RED";
+  state.playerStatus = { red: "WAITING", blue: "WAITING" };
+
+  return state;
+}
+
 // ── Card Inference ──────────────────────────────────────────────────
 
 /**
@@ -129,6 +187,7 @@ export async function initGameState({ gameId, matchId, matchUuid }) {
     pastRounds: [],
     moves: [],
     moveCounter: 0,
+    activePlayer: "RED",
     playerStatus: { red: "WAITING", blue: "WAITING" },
   };
 
@@ -153,16 +212,50 @@ export async function setGameState(gameId, state) {
   await redis.setex(stateKey(gameId), STATE_TTL, JSON.stringify(state));
 }
 
+export async function mutateGameStateWithClient(
+  client,
+  key,
+  mutator,
+  { ttl = STATE_TTL, retries = 5 } = {},
+) {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    await client.watch(key);
+    const raw = await client.get(key);
+    if (!raw) {
+      await client.unwatch();
+      return null;
+    }
+
+    const state = JSON.parse(raw);
+    const mutated = (await mutator(state)) || state;
+    const result = await client
+      .multi()
+      .setex(key, ttl, JSON.stringify(mutated))
+      .exec();
+
+    if (result) {
+      return mutated;
+    }
+  }
+
+  throw new Error(`Failed to update game state after ${retries} retries`);
+}
+
+export async function mutateGameState(gameId, mutator, options) {
+  return mutateGameStateWithClient(redis, stateKey(gameId), mutator, options);
+}
+
 /**
  * Update specific fields in the game state.
  */
 export async function updateGameState(gameId, updates) {
-  const state = await getGameState(gameId);
-  if (!state) {
+  const updated = await mutateGameState(gameId, (state) => ({
+    ...state,
+    ...updates,
+  }));
+  if (!updated) {
     throw new Error(`No game state in Redis for gameId=${gameId}`);
   }
-  const updated = { ...state, ...updates };
-  await setGameState(gameId, updated);
   return updated;
 }
 
@@ -171,106 +264,66 @@ export async function updateGameState(gameId, updates) {
  * Updates the player's cards array in Redis state.
  */
 export async function recordCardDealt(gameId, player, card) {
-  const state = await getGameState(gameId);
-  if (!state) return;
-
-  const side = player === "RED" ? "red" : "blue";
-  state[side].cards.push(card);
-  await setGameState(gameId, state);
+  return mutateGameState(gameId, (state) => {
+    const side = player === "RED" ? "red" : "blue";
+    state[side].cards.push(card);
+    return state;
+  });
 }
 
 /**
  * Record river cards.
  */
 export async function recordRiverCards(gameId, redCard, blueCard) {
-  const state = await getGameState(gameId);
-  if (!state) return;
-
-  state.riverRed = redCard;
-  state.riverBlue = blueCard;
-
-  // Add to player cards array
-  state.red.cards.push(redCard);
-  state.blue.cards.push(blueCard);
-
-  await setGameState(gameId, state);
+  return mutateGameState(gameId, (state) => {
+    state.riverRed = redCard;
+    state.riverBlue = blueCard;
+    state.red.cards.push(redCard);
+    state.blue.cards.push(blueCard);
+    return state;
+  });
 }
 
 /**
  * Record a tiebreaker card pair.
  */
 export async function recordTiebreakerCards(gameId, redCard, blueCard) {
-  const state = await getGameState(gameId);
-  if (!state) return;
-
-  state.tiebreakerCards.push({ red: redCard, blue: blueCard });
-
-  // Add to player cards array
-  state.red.cards.push(redCard);
-  state.blue.cards.push(blueCard);
-
-  await setGameState(gameId, state);
+  return mutateGameState(gameId, (state) => {
+    state.tiebreakerCards.push({ red: redCard, blue: blueCard });
+    state.red.cards.push(redCard);
+    state.blue.cards.push(blueCard);
+    return state;
+  });
 }
 
 /**
  * Record an agent move (action + reason).
  */
 export async function recordMove(gameId, move) {
-  const state = await getGameState(gameId);
-  if (!state) return;
-
-  state.moveCounter++;
-  state.moves.push({ ...move, moveNumber: state.moveCounter });
-  await setGameState(gameId, state);
-  return state.moveCounter;
+  const state = await mutateGameState(gameId, (draft) => {
+    draft.moveCounter++;
+    draft.moves.push({ ...move, moveNumber: draft.moveCounter });
+    return draft;
+  });
+  return state?.moveCounter;
 }
 
 /**
  * Sync on-chain state into Redis (scores, hp, aces, stayed, phase).
  */
 export async function syncOnChainState(gameId, onChainState, phase) {
-  const state = await getGameState(gameId);
-  if (!state) return;
-
-  state.red.score = onChainState.p1Score;
-  state.red.hp = onChainState.p1Hp;
-  state.red.aces = onChainState.p1Aces;
-  state.red.stayed = onChainState.p1Stayed;
-
-  state.blue.score = onChainState.p2Score;
-  state.blue.hp = onChainState.p2Hp;
-  state.blue.aces = onChainState.p2Aces;
-  state.blue.stayed = onChainState.p2Stayed;
-
-  state.phase = phase;
-  state.roundNumber = onChainState.roundNumber;
-
-  await setGameState(gameId, state);
-  return state;
+  return mutateGameState(gameId, (state) =>
+    applyOnChainState(state, onChainState, phase),
+  );
 }
 
 /**
  * Archive current round data into pastRounds and reset for next round.
  */
 export async function archiveRound(gameId, roundSummary) {
-  const state = await getGameState(gameId);
-  if (!state) return;
-
-  state.pastRounds.push(roundSummary);
-
-  // Reset for next round
-  state.red.cards = [];
-  state.blue.cards = [];
-  state.red.stayed = false;
-  state.blue.stayed = false;
-  state.riverRed = null;
-  state.riverBlue = null;
-  state.tiebreakerCards = [];
-  state.moves = [];
-  state.moveCounter = 0;
-
-  await setGameState(gameId, state);
-  return state;
+  return mutateGameState(gameId, (state) =>
+    resetCurrentRoundState(state, roundSummary),
+  );
 }
 
 /**
