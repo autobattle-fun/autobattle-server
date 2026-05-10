@@ -2,7 +2,11 @@ import { Server as SocketIOServer } from "socket.io";
 import { env } from "../config/env.js";
 import { logger } from "./logger.js";
 import { prisma } from "../db/prisma.js";
-import { getGameState, getMatchBreakCountdown, displayScoreForPlayer } from "./game-state-store.js";
+import {
+  getGameState,
+  getMatchBreakCountdown,
+  displayScoreForPlayer,
+} from "./game-state-store.js";
 import {
   addRoundSystemLog,
   getRoundSystemLogs,
@@ -412,18 +416,32 @@ function emitToRooms(eventType, envelope, matchId) {
  * Broadcast a game event to all connected clients.
  * Also forwards the event as a Telegram notification.
  */
-export async function broadcast(eventType, payload, matchId, sendGameState = true) {
+export async function broadcast(
+  eventType,
+  payload,
+  matchId,
+  sendGameState = true,
+) {
   if (!io) return;
 
   let finalPayload = payload;
   const countdown = await getMatchBreakCountdown();
   finalPayload = { ...finalPayload, countdown };
 
-  if (matchId && payload && typeof payload === "object" && !payload.gameState && sendGameState) {
+  if (
+    matchId &&
+    payload &&
+    typeof payload === "object" &&
+    !payload.gameState &&
+    sendGameState
+  ) {
     try {
       const gameState = await getFullGameState(matchId);
 
-      if (gameState && (eventType === "round:resolved" || eventType === "tiebreaker:resolved")) {
+      if (
+        gameState &&
+        (eventType === "round:resolved" || eventType === "tiebreaker:resolved")
+      ) {
         gameState.phase = "ROUND_RESOLVED";
       }
       if (gameState && eventType === "agent:decision" && payload.red?.reason) {
@@ -431,6 +449,9 @@ export async function broadcast(eventType, payload, matchId, sendGameState = tru
       }
       if (gameState && eventType === "agent:decision" && payload.blue?.reason) {
         gameState.blue.reason = payload.blue.reason;
+      }
+      if (gameState && eventType === "river:flowing") {
+        gameState.phase = "RIVER_REVEALED";
       }
 
       if (gameState) {
@@ -449,25 +470,39 @@ export async function broadcast(eventType, payload, matchId, sendGameState = tru
   logger.info("WebSocket broadcast", { eventType, matchId });
 
   // Forward to Telegram (fire-and-forget, never block the broadcast)
-  notifyEvent(eventType, finalPayload, matchId).catch(() => { });
+  notifyEvent(eventType, finalPayload, matchId).catch(() => {});
 }
 
 /**
  * Broadcast a game event to WebSocket clients only (no Telegram).
  * Used for high-frequency events like market price updates.
  */
-export async function broadcastNoTelegram(eventType, payload, matchId, sendGameState = true) {
+export async function broadcastNoTelegram(
+  eventType,
+  payload,
+  matchId,
+  sendGameState = true,
+) {
   if (!io) return;
 
   let finalPayload = payload;
   const countdown = await getMatchBreakCountdown();
   finalPayload = { ...finalPayload, countdown };
 
-  if (matchId && payload && typeof payload === "object" && !payload.gameState && sendGameState) {
+  if (
+    matchId &&
+    payload &&
+    typeof payload === "object" &&
+    !payload.gameState &&
+    sendGameState
+  ) {
     try {
       const gameState = await getFullGameState(matchId);
 
-      if (gameState && (eventType === "round:resolved" || eventType === "tiebreaker:resolved")) {
+      if (
+        gameState &&
+        (eventType === "round:resolved" || eventType === "tiebreaker:resolved")
+      ) {
         gameState.phase = "ROUND_RESOLVED";
       }
 

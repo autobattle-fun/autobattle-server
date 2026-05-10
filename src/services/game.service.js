@@ -159,17 +159,14 @@ export async function startMatch() {
     result.match.id,
   );
 
-  // Set PREPARING countdown — the match exists but isn't active yet
   const countdown = await getMatchBreakCountdown();
   let preparingEndUnix;
 
   if (countdown.isBreak && countdown.nextStartAt) {
-    // Preserve the original countdown end time (Matchmaking + Preparation)
     preparingEndUnix = Math.floor(
       new Date(countdown.nextStartAt).getTime() / 1000,
     );
   } else {
-    // Manual start or missing countdown — set fresh preparation period
     preparingEndUnix =
       Math.floor(Date.now() / 1000) + env.PREPARATION_PHASE_SECONDS;
   }
@@ -301,12 +298,7 @@ export async function playRound(matchId) {
   const blueHpBefore = match.blueHp;
 
   logger.info("Playing round", { matchId, gameId, round: match.roundNumber });
-  wsEvents.roundStarted(
-    {
-      roundNumber: match.roundNumber,
-    },
-    matchId,
-  );
+  wsEvents.roundStarted({ roundNumber: match.roundNumber }, matchId);
   await addMatchLog(gameId, "System", `Round ${match.roundNumber} started`);
   wsEvents.logBroadcast(
     "system",
@@ -321,10 +313,29 @@ export async function playRound(matchId) {
     });
   }
 
-  // Step 1: Deal initial cards
   let gs = await solanaService.fetchGameState(gameId);
-  const currentRound = gs.roundNumber;
+  let phase = parseGamePhase(gs.phase);
 
+  if (phase === "READY_TO_RESOLVE") {
+    logger.info("Match resumed in READY_TO_RESOLVE. Catching up...", {
+      gameId,
+    });
+    wsEvents.logBroadcast(
+      "system",
+      "Recovering stuck state (ReadyToResolve)...",
+      matchId,
+      false,
+    );
+    await withRetry(() => solanaService.resolveRound(gameId), {
+      label: "resolveRound:unstick",
+      matchId,
+      gameId,
+    });
+    gs = await solanaService.fetchGameState(gameId);
+    phase = parseGamePhase(gs.phase);
+  }
+
+  const currentRound = gs.roundNumber;
   if (currentRound > 1) {
     const existingMarket = await prisma.market.findFirst({
       where: {
@@ -340,7 +351,7 @@ export async function playRound(matchId) {
           solanaService.createOnChainMarket(
             gameId,
             currentRound,
-            `Will Red Win Round ${currentRound} of Match #${gameId}?`,
+            `Will Red Win Round ${currentRound}?`,
             closesAtUnix,
           ),
         { label: `createOnChainMarket:round${currentRound}`, gameId },
@@ -365,38 +376,50 @@ export async function playRound(matchId) {
     }
   }
 
-  wsEvents.logBroadcast("system", "VRF Request: Initial cards", matchId, false);
-  await withRetry(() => solanaService.vrfStep(gameId, ROLL_TYPE.INITIAL_DEAL), {
-    label: "vrfStep:INITIAL_DEAL",
-    matchId,
-    gameId,
-  });
-  wsEvents.logBroadcast("system", "VRF Reveal: Cards dealt", matchId, false);
-  await new Promise((r) => setTimeout(r, env.MOCK_SOLANA ? 100 : MOVE_DELAY_MS));
-  gs = await solanaService.fetchGameState(gameId);
-
   let state = await getGameState(gameId);
   if (!state) state = await initGameState({ gameId, matchId, matchUuid });
 
-  // Infer initial cards from scores (each player gets 1 card)
+  if (phase === "AWAITING_INITIAL_DEAL") {
+    wsEvents.logBroadcast(
+      "system",
+      "VRF Request: Initial cards",
+      matchId,
+      false,
+    );
+    await withRetry(
+      () => solanaService.vrfStep(gameId, ROLL_TYPE.INITIAL_DEAL),
+      {
+        label: "vrfStep:INITIAL_DEAL",
+        matchId,
+        gameId,
+      },
+    );
+    wsEvents.logBroadcast("system", "VRF Reveal: Cards dealt", matchId, false);
+    await new Promise((r) =>
+      setTimeout(r, env.MOCK_SOLANA ? 100 : MOVE_DELAY_MS),
+    );
+
+    gs = await solanaService.fetchGameState(gameId);
+    phase = parseGamePhase(gs.phase);
+  }
+
   const { score: redCalcScoreInit } = calculateScoreFromCards(state.red.cards);
   const redInitCard = inferCard(0, gs.p1Score, 0, gs.p1Aces, gs.p1LastCard);
 
-  const { score: blueCalcScoreInit } = calculateScoreFromCards(state.blue.cards);
+  const { score: blueCalcScoreInit } = calculateScoreFromCards(
+    state.blue.cards,
+  );
   const blueInitCard = inferCard(0, gs.p2Score, 0, gs.p2Aces, gs.p2LastCard);
   state = await mutateGameState(gameId, (draft) => {
-    if (redCalcScoreInit === 0 && gs.p1Score > 0) {
+    if (redCalcScoreInit === 0 && gs.p1Score > 0)
       draft.red.cards.push(redInitCard);
-    }
-    if (blueCalcScoreInit === 0 && gs.p2Score > 0) {
+    if (blueCalcScoreInit === 0 && gs.p2Score > 0)
       draft.blue.cards.push(blueInitCard);
-    }
     return applyOnChainState(draft, gs, parseGamePhase(gs.phase));
   });
 
   const redScoreInit = gs.p1Score;
   const blueScoreInit = gs.p2Score;
-
   const currentPrices = getCurrentMarketPrices(matchId);
   const market = Object.keys(currentPrices).length > 0 ? currentPrices : null;
 
@@ -422,37 +445,63 @@ export async function playRound(matchId) {
     },
     matchId,
   );
-  await addMatchLog(
-    gameId,
-    "Red",
-    `Dealt ${redInitCard.label} (score: ${gs.p1Score})`,
-  );
-  await addMatchLog(
-    gameId,
-    "Blue",
-    `Dealt ${blueInitCard.label} (score: ${gs.p2Score})`,
-  );
 
-  // Step 2: Agent turns (LLM-driven hit/stay)
-  await runAgentTurns(gameId, gs, match);
-  gs = await solanaService.fetchGameState(gameId);
-  await syncOnChainState(gameId, gs, parseGamePhase(gs.phase));
+  if (phase === "AWAITING_ACTION" || phase === "AWAITING_HIT_VRF") {
+    await runAgentTurns(gameId, gs, match);
+    gs = await solanaService.fetchGameState(gameId);
+    phase = parseGamePhase(gs.phase);
+    await syncOnChainState(gameId, gs, phase);
+  }
 
-  // Step 3: River card
   const preRiverRedScore = gs.p1Score;
   const preRiverBlueScore = gs.p2Score;
   const preRiverRedAces = gs.p1Aces;
   const preRiverBlueAces = gs.p2Aces;
 
-  wsEvents.logBroadcast("system", "VRF Request: River reveal", matchId, false);
-  await withRetry(() => solanaService.vrfStep(gameId, ROLL_TYPE.FINAL_REVEAL), {
-    label: "vrfStep:FINAL_REVEAL",
-    matchId,
-    gameId,
-  });
-  wsEvents.logBroadcast("system", "VRF Reveal: River cards revealed", matchId, false);
-  await new Promise((r) => setTimeout(r, env.MOCK_SOLANA ? 100 : MOVE_DELAY_MS));
-  gs = await solanaService.fetchGameState(gameId);
+  if (phase === "AWAITING_FINAL_REVEAL_VRF") {
+    wsEvents.logBroadcast(
+      "system",
+      "VRF Request: River reveal",
+      matchId,
+      false,
+    );
+    await withRetry(
+      () => solanaService.vrfStep(gameId, ROLL_TYPE.FINAL_REVEAL),
+      {
+        label: "vrfStep:FINAL_REVEAL",
+        matchId,
+        gameId,
+      },
+    );
+    wsEvents.logBroadcast(
+      "system",
+      "VRF Reveal: River cards revealed",
+      matchId,
+      false,
+    );
+    await new Promise((r) =>
+      setTimeout(r, env.MOCK_SOLANA ? 100 : MOVE_DELAY_MS),
+    );
+
+    gs = await solanaService.fetchGameState(gameId);
+    phase = parseGamePhase(gs.phase);
+  }
+
+  if (phase === "READY_TO_RESOLVE") {
+    wsEvents.logBroadcast(
+      "system",
+      "Resolving round on-chain...",
+      matchId,
+      false,
+    );
+    await withRetry(() => solanaService.resolveRound(gameId), {
+      label: "resolveRound:river",
+      matchId,
+      gameId,
+    });
+    gs = await solanaService.fetchGameState(gameId);
+    phase = parseGamePhase(gs.phase);
+  }
 
   const riverRedCard = inferCard(
     preRiverRedScore,
@@ -468,6 +517,7 @@ export async function playRound(matchId) {
     gs.p2Aces,
     gs.p2LastCard,
   );
+
   state = await mutateGameState(gameId, (draft) => {
     draft.riverRed = riverRedCard;
     draft.riverBlue = riverBlueCard;
@@ -475,6 +525,7 @@ export async function playRound(matchId) {
     draft.blue.cards.push(riverBlueCard);
     return applyOnChainState(draft, gs, parseGamePhase(gs.phase));
   });
+
   wsEvents.riverFlowing(
     {
       playerStatus: state?.playerStatus || { red: "WAITING", blue: "WAITING" },
@@ -482,15 +533,6 @@ export async function playRound(matchId) {
     },
     matchId,
   );
-  await addMatchLog(
-    gameId,
-    "System",
-    `River revealed — Red: ${riverRedCard.label} (${gs.p1Score}), Blue: ${riverBlueCard.label} (${gs.p2Score})`,
-  );
-
-  // Step 4: Resolve round (handled automatically by contract during FINAL_REVEAL)
-  gs = await solanaService.fetchGameState(gameId);
-  let phase = parseGamePhase(gs.phase);
 
   const finishedRound = phase === "ENDED" ? gs.roundNumber : gs.roundNumber - 1;
 
@@ -522,39 +564,45 @@ export async function playRound(matchId) {
   });
 
   for (const m of roundMarketsToResolve) {
-    try {
-      await withRetry(() => solanaService.retrieveLp(m.marketPda, m.vaultPda), {
-        label: "retrieveLp:round",
-        matchId,
-        gameId,
-      });
-    } catch (e) {
-      logger.error("Failed to retrieve LP for round market", {
-        error: e.message,
-        marketId: m.id,
-      });
-      throw e;
-    }
+    await withRetry(() => solanaService.retrieveLp(m.marketPda, m.vaultPda), {
+      label: "retrieveLp:round",
+      matchId,
+      gameId,
+    });
   }
 
   await syncOnChainState(gameId, gs, phase);
 
-  // Step 5: Tiebreaker loop
-  while (phase === "AWAITING_TIEBREAKER_VRF") {
-    logger.info("Tiebreaker — sudden death", { gameId });
-    wsEvents.tiebreakerStarted(
-      {
-        phase: "AwaitingTiebreaker",
-      },
-      matchId,
-    );
+  while (phase === "AWAITING_TIEBREAKER_VRF" || phase === "READY_TO_RESOLVE") {
+    if (phase === "READY_TO_RESOLVE") {
+      wsEvents.logBroadcast(
+        "system",
+        "Resolving tiebreaker on-chain...",
+        matchId,
+        false,
+      );
+      await withRetry(() => solanaService.resolveRound(gameId), {
+        label: "resolveRound:tiebreaker",
+        matchId,
+        gameId,
+      });
+      gs = await solanaService.fetchGameState(gameId);
+      phase = parseGamePhase(gs.phase);
+      continue;
+    }
 
+    wsEvents.tiebreakerStarted({ phase: "AwaitingTiebreaker" }, matchId);
     const preTbRedScore = gs.p1Score;
     const preTbBlueScore = gs.p2Score;
     const preTbRedAces = gs.p1Aces;
     const preTbBlueAces = gs.p2Aces;
 
-    wsEvents.logBroadcast("system", "VRF Request: Tiebreaker draw", matchId, false);
+    wsEvents.logBroadcast(
+      "system",
+      "VRF Request: Tiebreaker draw",
+      matchId,
+      false,
+    );
     await withRetry(() => solanaService.vrfStep(gameId, ROLL_TYPE.TIEBREAKER), {
       label: "vrfStep:TIEBREAKER",
       matchId,
@@ -566,8 +614,12 @@ export async function playRound(matchId) {
       matchId,
       false,
     );
-    await new Promise((r) => setTimeout(r, env.MOCK_SOLANA ? 100 : MOVE_DELAY_MS));
+
+    await new Promise((r) =>
+      setTimeout(r, env.MOCK_SOLANA ? 100 : MOVE_DELAY_MS),
+    );
     gs = await solanaService.fetchGameState(gameId);
+    phase = parseGamePhase(gs.phase);
 
     const tbRedCard = inferCard(
       preTbRedScore,
@@ -583,18 +635,17 @@ export async function playRound(matchId) {
       gs.p2Aces,
       gs.p2LastCard,
     );
+
     state = await mutateGameState(gameId, (draft) => {
       draft.tiebreakerCards.push({ red: tbRedCard, blue: tbBlueCard });
       draft.red.cards.push(tbRedCard);
       draft.blue.cards.push(tbBlueCard);
       return applyOnChainState(draft, gs, parseGamePhase(gs.phase));
     });
+
     wsEvents.tiebreakerResolved(
       {
-        playerStatus: {
-          red: "WAITING",
-          blue: "WAITING",
-        },
+        playerStatus: { red: "WAITING", blue: "WAITING" },
         phase: "ROUND_RESOLVED",
         red: buildPlayerState(gs, state, match, "RED"),
         blue: buildPlayerState(gs, state, match, "BLUE"),
@@ -602,12 +653,8 @@ export async function playRound(matchId) {
       matchId,
     );
 
-    gs = await solanaService.fetchGameState(gameId);
-    phase = parseGamePhase(gs.phase);
-
     const finishedRoundTb =
       phase === "ENDED" ? gs.roundNumber : gs.roundNumber - 1;
-
     let tbWinningOutcome = null;
     if (gs.p1Hp < redHpBefore) tbWinningOutcome = "NO";
     else if (gs.p2Hp < blueHpBefore) tbWinningOutcome = "YES";
@@ -635,33 +682,21 @@ export async function playRound(matchId) {
     });
 
     for (const m of tbRoundMarketsToResolve) {
-      try {
-        await withRetry(
-          () => solanaService.retrieveLp(m.marketPda, m.vaultPda),
-          { label: "retrieveLp:tb_round", matchId, gameId },
-        );
-      } catch (e) {
-        logger.error("Failed to retrieve LP for tiebreaker round market", {
-          error: e.message,
-          marketId: m.id,
-        });
-        throw e;
-      }
+      await withRetry(() => solanaService.retrieveLp(m.marketPda, m.vaultPda), {
+        label: "retrieveLp:tb_round",
+        matchId,
+        gameId,
+      });
     }
-
     await syncOnChainState(gameId, gs, phase);
   }
 
-  // Step 6: Determine round winner and damage
   const damageDealt = Math.pow(2, match.roundNumber - 1);
   let roundWinner = null;
   if (gs.p1Hp < redHpBefore) roundWinner = "BLUE";
   else if (gs.p2Hp < blueHpBefore) roundWinner = "RED";
 
-  // Step 7: Persist round log to Prisma
   state = await getGameState(gameId);
-  // If gs scores are 0 but we just dealt a river card, it means the round reset.
-  // Reconstruct the actual scores for the round log.
   const redScoreFinal =
     gs.p1Score === 0 && riverRedCard.value > 0
       ? preRiverRedScore + riverRedCard.value
@@ -695,24 +730,20 @@ export async function playRound(matchId) {
   });
 
   const roundSystemLogs = await getRoundSystemLogs(matchId);
-
   if (roundSystemLogs.length > 0) {
     await prisma.matchRound.update({
       where: { id: roundLog.id },
       data: { roundSystemLogs },
     });
-
     await clearRoundSystemLogs(matchId);
   }
 
-  // Persist individual moves
   if (state?.moves?.length > 0) {
     await prisma.roundMove.createMany({
       data: state.moves.map((m) => ({ roundId: roundLog.id, ...m })),
     });
   }
 
-  // Step 8: Sync match state to Prisma
   const updatedMatch = await syncMatchState(match, gs);
 
   wsEvents.roundResolved(
@@ -724,22 +755,12 @@ export async function playRound(matchId) {
     },
     matchId,
   );
-  await addMatchLog(
-    gameId,
-    "System",
-    `Round ${match.roundNumber} resolved — Winner: ${roundWinner || "TIE"}, Damage: ${damageDealt}`,
-  );
-  wsEvents.logBroadcast(
-    "system",
-    `Round ${match.roundNumber} resolved. Winner: ${roundWinner || "TIE"}`,
-    matchId,
-    false,
-  );
 
   if (updatedMatch.status === "RESOLVED") {
+    // 🚨 FIX 1: Send uppercase "ENDED"
     wsEvents.matchEnded(
       {
-        phase: "Ended",
+        phase: "ENDED",
         gameId,
         red: buildPlayerState(gs, state, match, "RED"),
         blue: buildPlayerState(gs, state, match, "BLUE"),
@@ -751,27 +772,18 @@ export async function playRound(matchId) {
       "System",
       `Match ended — Winner: ${updatedMatch.winner}`,
     );
-    wsEvents.logBroadcast(
-      "system",
-      `Match #${gameId} ended — Winner: ${updatedMatch.winner}`,
-      matchId,
-      false,
-    );
-    await deleteGameState(gameId);
+
+    // 🚨 FIX 2: Do NOT aggressively delete the Redis state immediately!
+    // Leaving it intact means the frontend can still fetch the final game summary via REST.
+    // await deleteGameState(gameId);
+
     await clearMatchLogs(gameId);
 
-    // Set the MATCHMAKING countdown for the next match (Matchmaking + Preparation wait)
-    const breakSeconds = env.MATCHMAKING_PHASE_SECONDS + env.PREPARATION_PHASE_SECONDS;
+    const breakSeconds =
+      env.MATCHMAKING_PHASE_SECONDS + env.PREPARATION_PHASE_SECONDS;
     const nextStartAtUnix = Math.floor(Date.now() / 1000) + breakSeconds;
     await setMatchBreakCountdown(nextStartAtUnix, "MATCHMAKING");
-    logger.info("Match break started (MATCHMAKING)", {
-      breakSeconds,
-      nextStartAt: new Date(nextStartAtUnix * 1000).toISOString(),
-    });
-  }
-
-  if (updatedMatch.status !== "RESOLVED") {
-    // Archive round in Redis for next round
+  } else {
     await archiveRound(gameId, {
       roundNumber: match.roundNumber,
       redCards: state?.red?.cards || [],
@@ -796,10 +808,13 @@ async function runAgentTurns(gameId, initialGs, match) {
     currentPlayer = parseColor(latestGs.activePlayer) || currentPlayer;
     if (currentPlayer === "RED" && state.red.stayed && !state.blue.stayed) {
       currentPlayer = "BLUE";
-    } else if (currentPlayer === "BLUE" && state.blue.stayed && !state.red.stayed) {
+    } else if (
+      currentPlayer === "BLUE" &&
+      state.blue.stayed &&
+      !state.red.stayed
+    ) {
       currentPlayer = "RED";
     }
-    // Bail out if match was paused (e.g. by a failed withRetry in a concurrent path)
     const currentMatch = await prisma.match.findUnique({
       where: { id: match.id },
       select: { status: true },
@@ -848,7 +863,6 @@ async function runSingleAgentTurn(gameId, player, match) {
   const oppHp = isRed ? match.blueHp : match.redHp;
 
   if (myStayed) {
-    // Auto-heal Redis if it fell out of sync due to an RPC timeout
     await mutateGameState(gameId, (draft) => {
       applyOnChainState(draft, gs, parseGamePhase(gs.phase));
       draft[player.toLowerCase()].stayed = true;
@@ -908,7 +922,10 @@ async function runSingleAgentTurn(gameId, player, match) {
 
     wsEvents.agentDecision(
       {
-        playerStatus: state?.playerStatus || { red: "WAITING", blue: "WAITING" },
+        playerStatus: state?.playerStatus || {
+          red: "WAITING",
+          blue: "WAITING",
+        },
         red: buildPlayerState(gs, state, match, "RED", player, reason),
         blue: buildPlayerState(gs, state, match, "BLUE", player, reason),
       },
@@ -924,7 +941,7 @@ async function runSingleAgentTurn(gameId, player, match) {
           "system",
           `VRF Request: Agent ${player} Hit`,
           match.id,
-          false
+          false,
         );
         txSig = await withRetry(
           () => solanaService.vrfStep(gameId, ROLL_TYPE.HIT, player),
@@ -954,7 +971,9 @@ async function runSingleAgentTurn(gameId, player, match) {
         throw hitError;
       }
 
-      await new Promise((r) => setTimeout(r, env.MOCK_SOLANA ? 100 : MOVE_DELAY_MS));
+      await new Promise((r) =>
+        setTimeout(r, env.MOCK_SOLANA ? 100 : MOVE_DELAY_MS),
+      );
       const updated = await solanaService.fetchGameState(gameId);
 
       const newScore = isRed ? updated.p1Score : updated.p2Score;
@@ -972,7 +991,13 @@ async function runSingleAgentTurn(gameId, player, match) {
         else if (rawCardValue === 12) label = "Q";
         else if (rawCardValue === 13) label = "K";
 
-        const inferred = inferCard(myScore, newScore, myAces, newAces, rawCardValue);
+        const inferred = inferCard(
+          myScore,
+          newScore,
+          myAces,
+          newAces,
+          rawCardValue,
+        );
         card = { value: inferred.value, label };
       } else {
         card = inferCard(myScore, newScore, myAces, newAces);
@@ -1043,8 +1068,22 @@ async function runSingleAgentTurn(gameId, player, match) {
               red: "WAITING",
               blue: "WAITING",
             },
-            red: buildPlayerState(updated, state, match, "RED", player, "Score >= 21, forced by contract"),
-            blue: buildPlayerState(updated, state, match, "BLUE", player, "Score >= 21, forced by contract"),
+            red: buildPlayerState(
+              updated,
+              state,
+              match,
+              "RED",
+              player,
+              "Score >= 21, forced by contract",
+            ),
+            blue: buildPlayerState(
+              updated,
+              state,
+              match,
+              "BLUE",
+              player,
+              "Score >= 21, forced by contract",
+            ),
           },
           match.id,
         );
@@ -1056,7 +1095,9 @@ async function runSingleAgentTurn(gameId, player, match) {
         gameId,
       });
 
-      await new Promise((r) => setTimeout(r, env.MOCK_SOLANA ? 100 : MOVE_DELAY_MS));
+      await new Promise((r) =>
+        setTimeout(r, env.MOCK_SOLANA ? 100 : MOVE_DELAY_MS),
+      );
 
       const latestGs = await solanaService.fetchGameState(gameId);
       state = await mutateGameState(gameId, (draft) => {
@@ -1088,7 +1129,14 @@ async function runSingleAgentTurn(gameId, player, match) {
             blue: "WAITING",
           },
           red: buildPlayerState(latestGs, state, match, "RED", player, reason),
-          blue: buildPlayerState(latestGs, state, match, "BLUE", player, reason),
+          blue: buildPlayerState(
+            latestGs,
+            state,
+            match,
+            "BLUE",
+            player,
+            reason,
+          ),
         },
         match.id,
       );
@@ -1391,16 +1439,15 @@ export async function getMatchState(matchId) {
   }
 
   let liveGameState = null;
-  if (match.status !== "RESOLVED") {
-    try {
-      const gs = await solanaService.fetchGameState(match.gamePda);
-      liveGameState = serializeGameState(gs);
-    } catch (err) {
-      logger.warn("Failed to fetch live game state", {
-        matchId,
-        error: err.message,
-      });
-    }
+  // 🚨 FIX 3: ALWAYS fetch liveGameState so the client gets phase: "ENDED" properly!
+  try {
+    const gs = await solanaService.fetchGameState(match.gamePda);
+    liveGameState = serializeGameState(gs);
+  } catch (err) {
+    logger.warn("Failed to fetch live game state", {
+      matchId,
+      error: err.message,
+    });
   }
 
   const redisState = await getGameState(match.gameId);
@@ -1601,9 +1648,18 @@ function serializeGameState(gs) {
  * Build a player state object for WS event payloads.
  * Matches the shape used in test.controller.js fire methods.
  */
-function buildPlayerState(gs, redisState, match, color, activePlayerColor = null, activeReason = null) {
+function buildPlayerState(
+  gs,
+  redisState,
+  match,
+  color,
+  activePlayerColor = null,
+  activeReason = null,
+) {
   const isRed = color === "RED";
-  const cards = isRed ? redisState?.red?.cards || [] : redisState?.blue?.cards || [];
+  const cards = isRed
+    ? redisState?.red?.cards || []
+    : redisState?.blue?.cards || [];
   const score = displayScoreForPlayer({
     score: isRed ? gs.p1Score : gs.p2Score,
     cards,
