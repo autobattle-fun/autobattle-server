@@ -41,7 +41,7 @@ async function sendMessage(chatId, text, options = {}) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           chat_id: chatId,
-          text,
+          text: text.slice(0, 4090) + "...",
           parse_mode: "HTML",
           disable_web_page_preview: true,
           ...options,

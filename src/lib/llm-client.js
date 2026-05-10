@@ -25,8 +25,8 @@ import { getCelebrityByName } from "../services/celebrity.service.js";
 
 // Free model for testing
 const OPENROUTER_MODELS = [
-  "microsoft/phi-4-mini-instruct",
-  "microsoft/phi-4-mini-instruct"
+  "google/gemini-2.5-flash-lite",
+  "google/gemini-2.5-flash-lite"
 ]
 
 /**
@@ -133,7 +133,6 @@ ANALYSIS:
   }
 
   query += `\n\nWhat is your decision? Respond with ONLY valid JSON: {"action": "HIT"|"STAY", "reason": "your reasoning"}`;
-
   return query;
 }
 
