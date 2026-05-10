@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_DIR = path.join(__dirname, "../../logs");
 const LOG_FILE = path.join(LOG_DIR, "websockets.log");
+const DO_LOG = false;
 
 // Ensure logs directory exists
 if (!fs.existsSync(LOG_DIR)) {
@@ -20,13 +21,15 @@ if (!fs.existsSync(LOG_DIR)) {
  * @param {string} [matchId] - Optional match ID associated with the event
  */
 export function logWsEvent(direction, eventType, data, matchId = null) {
+  if (!DO_LOG) return;
+
   const timestamp = new Date().toISOString();
-  
+
   // Format the log entry for readability
   const separator = "=".repeat(80);
   const header = `[${timestamp}] [${direction}] [${matchId || "GLOBAL"}] Event: ${eventType}`;
   const payload = JSON.stringify(data, null, 2);
-  
+
   const logEntry = `${header}\n${payload}\n${separator}\n\n`;
 
   try {

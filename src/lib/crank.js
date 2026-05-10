@@ -205,7 +205,6 @@ async function maybeAutoStartMatch() {
 
     // No active match, no break → start a new match
     logger.info("Matchmaking phase expired — auto-starting new match (entering PREPARING)");
-    await clearMatchBreakCountdown();
     await startMatch();
   } catch (error) {
     logger.error("Auto-start match failed", {

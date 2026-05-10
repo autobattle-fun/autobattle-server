@@ -21,6 +21,7 @@ import {
   calculateScoreFromCards,
   displayScoreForPlayer,
   setMatchBreakCountdown,
+  getMatchBreakCountdown,
   clearMatchBreakCountdown,
   addMatchLog,
   clearMatchLogs,
@@ -159,8 +160,20 @@ export async function startMatch() {
   );
 
   // Set PREPARING countdown — the match exists but isn't active yet
-  const preparingEndUnix =
-    Math.floor(Date.now() / 1000) + env.PREPARATION_PHASE_SECONDS;
+  const countdown = await getMatchBreakCountdown();
+  let preparingEndUnix;
+
+  if (countdown.isBreak && countdown.nextStartAt) {
+    // Preserve the original countdown end time (Matchmaking + Preparation)
+    preparingEndUnix = Math.floor(
+      new Date(countdown.nextStartAt).getTime() / 1000,
+    );
+  } else {
+    // Manual start or missing countdown — set fresh preparation period
+    preparingEndUnix =
+      Math.floor(Date.now() / 1000) + env.PREPARATION_PHASE_SECONDS;
+  }
+
   await setMatchBreakCountdown(preparingEndUnix, "PREPARING");
 
   await initGameState({ gameId, matchId: result.match.id, matchUuid });

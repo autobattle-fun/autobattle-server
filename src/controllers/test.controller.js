@@ -813,7 +813,7 @@ export const fireEventMethods = {
   fireCardsDealt: async (req, res) => {
     try {
       const gameState = getMockGameState({
-        phase: "RED_TURN",
+        phase: "AWAITING_ACTION",
         playerStatus: { red: "THINKING", blue: "WAITING" },
         red: {
           ...getMockGameState().red,
