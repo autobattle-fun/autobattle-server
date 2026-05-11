@@ -470,7 +470,7 @@ export async function broadcast(
   logger.info("WebSocket broadcast", { eventType, matchId });
 
   // Forward to Telegram (fire-and-forget, never block the broadcast)
-  notifyEvent(eventType, finalPayload, matchId).catch(() => {});
+  notifyEvent(eventType, finalPayload, matchId).catch(() => { });
 }
 
 /**
@@ -578,7 +578,7 @@ export const wsEvents = {
   },
 
   logBroadcast(role, log, matchId, sendGameState = true) {
-    broadcast(
+    broadcastNoTelegram(
       "log:broadcast",
       {
         role,
