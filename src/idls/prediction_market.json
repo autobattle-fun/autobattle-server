@@ -323,6 +323,35 @@
       ]
     },
     {
+      "name": "sweep_unclaimed",
+      "discriminator": [64, 168, 221, 224, 42, 216, 138, 144],
+      "accounts": [
+        {
+          "name": "market",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "admin_token_account",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "address": "G2eWnQNwc1wrrgE78NcjmLBXXT9h2s9iUwAM1C8kpFzK"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "withdraw_lp",
       "discriminator": [225, 221, 45, 211, 49, 60, 51, 163],
       "accounts": [
@@ -390,6 +419,10 @@
     {
       "name": "SharesSold",
       "discriminator": [35, 231, 5, 53, 228, 158, 113, 251]
+    },
+    {
+      "name": "UnclaimedSwept",
+      "discriminator": [20, 92, 19, 237, 135, 103, 255, 168]
     }
   ],
   "errors": [
@@ -482,6 +515,21 @@
       "code": 6017,
       "name": "TradeTooSmall",
       "msg": "Trade amount is too small, resulting in zero fees."
+    },
+    {
+      "code": 6018,
+      "name": "LpNotYetWithdrawn",
+      "msg": "LP must withdraw before users can claim."
+    },
+    {
+      "code": 6019,
+      "name": "ClaimWindowExpired",
+      "msg": "Claim window has expired — use sweep_unclaimed."
+    },
+    {
+      "code": 6020,
+      "name": "ClaimWindowNotOver",
+      "msg": "Claim window not yet over — wait 48 hours after resolution."
     }
   ],
   "types": [
@@ -575,6 +623,14 @@
           {
             "name": "lp_withdrawn",
             "type": "bool"
+          },
+          {
+            "name": "resolved_at",
+            "type": "i64"
+          },
+          {
+            "name": "winner_payout_ratio",
+            "type": "u64"
           }
         ]
       }
@@ -777,6 +833,30 @@
           {
             "name": "fee",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UnclaimedSwept",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "game_id",
+            "type": "u64"
+          },
+          {
+            "name": "market_index",
+            "type": "u8"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
           }
         ]
       }
