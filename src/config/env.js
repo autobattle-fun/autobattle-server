@@ -58,6 +58,14 @@ const envSchema = z.object({
     .transform((value) => value === true || value === "true")
     .default(false),
 
+  // ── Sweep Cron ──
+  SWEEP_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => value === true || value === "true")
+    .default(true),
+  SWEEP_INTERVAL_MS: z.coerce.number().int().positive().default(1_800_000),
+
   // ── Match Break ──
   PREPARATION_PHASE_SECONDS: z.coerce.number().int().positive().default(120),
   MATCHMAKING_PHASE_SECONDS: z.coerce.number().int().positive().default(180),

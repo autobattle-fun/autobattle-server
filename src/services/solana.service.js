@@ -745,6 +745,29 @@ class SolanaService {
     return txSig;
   }
 
+  async sweepUnclaimed(marketPdaAddress, vaultPdaAddress) {
+    if (env.MOCK_SOLANA) return this._generateMockTx();
+    await this.initialize();
+
+    const crank = this.crankKeypair.publicKey;
+    const adminTokenAccount = await this._getCrankAta();
+
+    const txSig = await this.predMarket.methods
+      .sweepUnclaimed()
+      .accounts({
+        market: new PublicKey(marketPdaAddress),
+        vault: new PublicKey(vaultPdaAddress),
+        adminTokenAccount: adminTokenAccount,
+        authority: crank,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .signers([this.crankKeypair])
+      .rpc();
+
+    logger.info("Unclaimed winnings swept for market", { marketPdaAddress, txSig });
+    return txSig;
+  }
+
   // ── Internal Helpers & Mock Simulation ──────────────────────────
 
   _sleep(ms) {

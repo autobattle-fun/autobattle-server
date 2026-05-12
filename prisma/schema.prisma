@@ -137,6 +137,7 @@ model Market {
   closesAt       DateTime
   resolvesAt     DateTime?
   winningOutcome PredictionSide?
+  sweptAt        DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
