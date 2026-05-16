@@ -16,8 +16,8 @@ import {
   listMatchesSchema,
 } from "../utils/validators.js";
 import { getMatchBreakCountdown } from "../lib/game-state-store.js";
+import { prisma } from "../db/prisma.js";
 import { redis } from "../db/redis.js";
-import { logger } from "../lib/logger.js";
 
 /**
  * POST /games/start
@@ -267,4 +267,36 @@ export async function getMatchDetailsByGameIdController(request, response) {
     success: true,
     data: result,
   });
+}
+
+/**
+ * GET /games/celebrities
+ * Get all celebrities.
+ */
+const CELEBRITIES_CACHE_KEY = "autobattle:celebrities:list";
+const CELEBRITIES_CACHE_TTL = 10 * 60; // 10 minutes
+
+export async function getCelebritiesController(request, response) {
+  const cached = await redis.get(CELEBRITIES_CACHE_KEY);
+  if (cached) {
+    return response.json({ success: true, data: JSON.parse(cached) });
+  }
+
+  const celebrities = await prisma.celebrity.findMany({
+    select: {
+      id: true,
+      name: true,
+      image: true,
+      matchesPlayed: true,
+      wins: true,
+      winRate: true,
+    },
+  });
+
+  await redis.setex(
+    CELEBRITIES_CACHE_KEY,
+    CELEBRITIES_CACHE_TTL,
+    JSON.stringify(celebrities),
+  );
+  return response.json({ success: true, data: celebrities });
 }
