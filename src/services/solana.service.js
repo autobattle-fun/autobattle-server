@@ -749,7 +749,14 @@ class SolanaService {
     if (env.MOCK_SOLANA) return this._generateMockTx();
     await this.initialize();
 
-    const crank = this.crankKeypair.publicKey;
+    const marketInfo = await this.connection.getAccountInfo(
+      new PublicKey(marketPdaAddress)
+    );
+    if (!marketInfo) {
+      logger.warn("Market account already closed or missing", { marketPdaAddress });
+      return null;
+    }
+
     const adminTokenAccount = await this._getCrankAta();
 
     const txSig = await this.predMarket.methods
@@ -757,16 +764,22 @@ class SolanaService {
       .accounts({
         market: new PublicKey(marketPdaAddress),
         vault: new PublicKey(vaultPdaAddress),
-        adminTokenAccount: adminTokenAccount,
-        authority: crank,
+        adminTokenAccount,
+        authority: this.crankKeypair.publicKey,
         tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
       })
       .signers([this.crankKeypair])
       .rpc();
 
-    logger.info("Unclaimed winnings swept for market", { marketPdaAddress, txSig });
+    logger.info("Market swept and closed, rent recovered", {
+      marketPdaAddress,
+      txSig,
+    });
+
     return txSig;
   }
+
 
   // ── Internal Helpers & Mock Simulation ──────────────────────────
 
