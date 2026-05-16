@@ -42,3 +42,21 @@ export async function clearRoundSystemLogs(matchId) {
 
     logger.info("Round system logs cleared", { matchId });
 }
+
+// Add a general system log entry (not tied to a specific match)
+export async function addSystemLog(role, log) {
+    const key = `${KEY_PREFIX}:general`;
+
+    const entry = {
+        role,
+        log,
+        timestamp: Date.now(),
+    };
+
+    // Append to list, keep last 100 entries, and expire after 7 days
+    await redis.rpush(key, JSON.stringify(entry));
+    await redis.ltrim(key, -100, -1);
+    await redis.expire(key, 86400 * 7);
+
+    logger.info("General system log added", { role });
+}

@@ -173,19 +173,22 @@ export async function notifyEvent(eventType, data, matchId) {
 /**
  * Send a critical error alert via Telegram.
  */
-export async function notifyError(context, error) {
+export async function notifyError(context, error, shouldPause = true) {
   if (!isEnabled()) return;
 
   const safeContext = escapeHTML(context);
   const safeError = escapeHTML(error.message || String(error));
   const safeStack = escapeHTML((error.stack || "").slice(0, 500));
 
-  const message =
+  let message =
     `🚨 <b>CRITICAL ERROR</b>\n\n` +
     `Context: ${safeContext}\n` +
     `Error: <code>${safeError}</code>\n` +
-    `Stack: <code>${safeStack}</code>\n\n` +
-    `⏸️ Match has been PAUSED. Use /resume to continue.`;
+    `Stack: <code>${safeStack}</code>`;
+
+  if (shouldPause) {
+    message += `\n\n⏸️ Match has been PAUSED. Use /resume to continue.`;
+  }
 
   await sendNotification(message);
 }

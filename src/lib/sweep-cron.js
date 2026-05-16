@@ -2,8 +2,9 @@ import { prisma } from "../db/prisma.js";
 import { logger } from "./logger.js";
 import { solanaService } from "../services/solana.service.js";
 import { env } from "../config/env.js";
-import { notifyError } from "./telegram.js";
+import { notifyError, sendNotification } from "./telegram.js";
 import { withRetry } from "./transaction-retry.js";
+import { addRoundSystemLog, addSystemLog } from "./system-log-state-store.js";
 
 let isRunning = false;
 let intervalHandle = null;
@@ -27,12 +28,25 @@ export function startSweepCron() {
   async function scheduleNext() {
     if (!isRunning) return;
     try {
-      await sweepCycle();
+      const stats = await sweepCycle();
+      if (stats && stats.total > 0) {
+        const summary = 
+          `🧹 <b>Sweep Cycle Summary</b>\n\n` +
+          `- <b>Total Candidates:</b> ${stats.total}\n` +
+          `- <b>✅ Successfully Swept:</b> ${stats.success}\n` +
+          `- <b>⚠️ Skipped:</b> ${stats.skipped}\n` +
+          `- <b>❌ Failed:</b> ${stats.failed}`;
+        
+        await sendNotification(summary);
+        await addSystemLog("system", `Sweep cycle finished: ${stats.success} success, ${stats.failed} failed, ${stats.skipped} skipped.`);
+      }
     } catch (error) {
       logger.error("Sweep cycle error", {
         error: error instanceof Error ? error.message : String(error),
         stack: error?.stack,
       });
+      await notifyError("Sweep Cron Job", error, false);
+      await addSystemLog("error", `Sweep cycle fatal error: ${error.message}`);
     }
     if (isRunning) {
       intervalHandle = setTimeout(scheduleNext, intervalMs);
@@ -64,11 +78,19 @@ async function sweepCycle() {
     take: 10, // Process in batches
   });
 
+  const stats = {
+    total: candidates.length,
+    success: 0,
+    skipped: 0,
+    failed: 0,
+  };
+
   if (candidates.length === 0) {
-    return;
+    return stats;
   }
 
   logger.info(`Found ${candidates.length} markets potentially eligible for sweep.`);
+  await addSystemLog("system", `Starting sweep cycle for ${candidates.length} markets.`);
 
   for (const market of candidates) {
     try {
@@ -80,6 +102,8 @@ async function sweepCycle() {
           where: { id: market.id },
           data: { sweptAt: new Date() },
         });
+        stats.success++;
+        await addRoundSystemLog(market.matchId, "system", "Successfully swept unclaimed funds (MOCK).");
         continue;
       }
 
@@ -92,6 +116,7 @@ async function sweepCycle() {
           resolved: mktState.resolved,
           lpWithdrawn: mktState.lpWithdrawn,
         });
+        stats.skipped++;
         continue;
       }
 
@@ -105,6 +130,7 @@ async function sweepCycle() {
           onChainResolvedAt,
           nowUnix,
         });
+        stats.skipped++;
         continue;
       }
 
@@ -122,14 +148,20 @@ async function sweepCycle() {
       });
 
       logger.info("Successfully swept market", { marketId: market.id });
+      stats.success++;
+      await addRoundSystemLog(market.matchId, "system", "Successfully swept unclaimed funds.");
     } catch (error) {
       logger.error("Failed to sweep market", {
         marketId: market.id,
         error: error.message,
       });
+      stats.failed++;
+      await addRoundSystemLog(market.matchId, "system", `Failed to sweep funds: ${error.message}`);
       // Do not throw, continue to next candidate
-      // We can optionally notify telegram for persistent sweep failures
-      await notifyError(`[sweepUnclaimed] Failed to sweep market ${market.id}`, error);
+      // Notify telegram for individual market failures (without pausing the match)
+      await notifyError(`[sweepUnclaimed] Market ${market.id}`, error, false);
     }
   }
+
+  return stats;
 }

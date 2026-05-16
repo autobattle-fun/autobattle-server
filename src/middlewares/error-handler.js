@@ -1,4 +1,5 @@
 import { logger } from "../lib/logger.js";
+import { notifyError } from "../lib/telegram.js";
 
 export function errorHandlerMiddleware(error, request, response, _next) {
   const isPrismaConnectivityError =
@@ -13,6 +14,9 @@ export function errorHandlerMiddleware(error, request, response, _next) {
       path: request.originalUrl,
       stack: error.stack,
     });
+
+    // Notify Telegram for server-side errors (without pausing matches)
+    notifyError(`API 5xx: ${request.method} ${request.originalUrl}`, error, false).catch(() => {});
   }
 
   const isServiceUnavailable = statusCode === 503;
