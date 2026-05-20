@@ -73,6 +73,8 @@ export async function startMatch() {
     blueName,
   });
 
+  await solanaService.rebalanceAgentWallets();
+
   await withRetry(() => solanaService.initGame(gameId, redAgent, blueAgent), {
     label: "initGame",
     gameId,

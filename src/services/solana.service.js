@@ -27,6 +27,7 @@ import {
   deriveVaultPda,
 } from "../utils/solana.helpers.js";
 import bs58 from "bs58";
+import { sendNotification } from "../lib/telegram.js";
 
 // ── IDL Loading ─────────────────────────────────────────────────────
 
@@ -778,6 +779,78 @@ class SolanaService {
     });
 
     return txSig;
+  }
+
+  async rebalanceAgentWallets() {
+    if (env.MOCK_SOLANA) {
+      logger.info("Mock Solana enabled, skipping agent wallet rebalance");
+      return;
+    }
+    const MIN_BALANCE = 0.05 * anchor.web3.LAMPORTS_PER_SOL;
+    const TOP_UP_TO   = 0.1  * anchor.web3.LAMPORTS_PER_SOL;
+
+    for (const [name, kp] of [
+      ["RED",  this.agentRedKeypair],
+      ["BLUE", this.agentBlueKeypair],
+    ]) {
+      try {
+        const balance = await this.connection.getBalance(kp.publicKey);
+        if (balance < MIN_BALANCE) {
+          const topUp = TOP_UP_TO - balance;
+          const crankBalance = await this.connection.getBalance(this.crankKeypair.publicKey);
+          const MIN_CRANK_BALANCE = 0.05 * anchor.web3.LAMPORTS_PER_SOL;
+
+          if (crankBalance - topUp < MIN_CRANK_BALANCE) {
+            logger.warn(`Crank has insufficient balance to top up agent ${name}`, {
+              crankBalance: crankBalance / anchor.web3.LAMPORTS_PER_SOL,
+              requiredTopUp: topUp / anchor.web3.LAMPORTS_PER_SOL,
+            });
+            await sendNotification(
+              `⚠️ <b>Agent Rebalance Alert</b>\n\n` +
+              `Crank wallet has insufficient balance to top up agent ${name}.\n` +
+              `- Crank balance: <code>${(crankBalance / anchor.web3.LAMPORTS_PER_SOL).toFixed(6)}</code> SOL\n` +
+              `- Required top up: <code>${(topUp / anchor.web3.LAMPORTS_PER_SOL).toFixed(6)}</code> SOL`
+            );
+            continue;
+          }
+
+          const tx = new anchor.web3.Transaction().add(
+            SystemProgram.transfer({
+              fromPubkey: this.crankKeypair.publicKey,
+              toPubkey:   kp.publicKey,
+              lamports:   topUp,
+            })
+          );
+          
+          const signature = await this.provider.sendAndConfirm(tx, [this.crankKeypair]);
+          const topUpSol = topUp / anchor.web3.LAMPORTS_PER_SOL;
+          const newBalanceSol = TOP_UP_TO / anchor.web3.LAMPORTS_PER_SOL;
+
+          logger.info(`Topped up agent ${name}`, { 
+            topUpSol,
+            newBalance: newBalanceSol,
+            signature,
+          });
+
+          await sendNotification(
+            `🤖 <b>Agent Rebalance</b>\n\n` +
+            `Successfully topped up agent ${name} from Crank:\n` +
+            `- <b>Top Up Amount:</b> <code>${topUpSol.toFixed(6)}</code> SOL\n` +
+            `- <b>New Agent Balance:</b> <code>${newBalanceSol.toFixed(6)}</code> SOL\n` +
+            `- <b>Tx Signature:</b> <code>${signature}</code>`
+          );
+        }
+      } catch (err) {
+        logger.error(`Failed to rebalance agent wallet for ${name}`, {
+          error: err.message,
+        });
+        await sendNotification(
+          `❌ <b>Agent Rebalance Error</b>\n\n` +
+          `Failed to top up agent ${name}:\n` +
+          `<code>${err.message}</code>`
+        );
+      }
+    }
   }
 
 
