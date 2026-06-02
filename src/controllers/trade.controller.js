@@ -1,6 +1,6 @@
 import { PublicKey, Transaction, SystemProgram } from "@solana/web3.js";
 import {
-  TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountInstruction,
   createTransferInstruction,
@@ -97,6 +97,8 @@ export async function buildTradeController(req, res) {
     const userTokenAccount = getAssociatedTokenAddressSync(
       AUTO_MINT_ADDRESS,
       user,
+      false,
+      TOKEN_2022_PROGRAM_ID,
     );
 
     const [positionPda] = PublicKey.findProgramAddressSync(
@@ -115,8 +117,9 @@ export async function buildTradeController(req, res) {
         userPosition: positionPda,
         vault: vaultPda,
         userTokenAccount,
+        mint: AUTO_MINT_ADDRESS,
         user,
-        tokenProgram: TOKEN_PROGRAM_ID,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
       })
       .instruction();
 
@@ -242,6 +245,8 @@ export async function buildSellController(req, res) {
     const userTokenAccount = getAssociatedTokenAddressSync(
       AUTO_MINT_ADDRESS,
       user,
+      false,
+      TOKEN_2022_PROGRAM_ID,
     );
     const [positionPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("position"), marketPda.toBuffer(), user.toBuffer()],
@@ -258,8 +263,9 @@ export async function buildSellController(req, res) {
         userPosition: positionPda,
         vault: vaultPda,
         userTokenAccount,
+        mint: AUTO_MINT_ADDRESS,
         user,
-        tokenProgram: TOKEN_PROGRAM_ID,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
       })
       .instruction();
 
@@ -352,10 +358,17 @@ export async function buildTransferController(req, res) {
   try {
     const sender = new PublicKey(userRecord.walletAddress);
     const recipient = new PublicKey(recipientAddress);
-    const senderAta = getAssociatedTokenAddressSync(AUTO_MINT_ADDRESS, sender);
+    const senderAta = getAssociatedTokenAddressSync(
+      AUTO_MINT_ADDRESS,
+      sender,
+      false,
+      TOKEN_2022_PROGRAM_ID,
+    );
     const recipientAta = getAssociatedTokenAddressSync(
       AUTO_MINT_ADDRESS,
       recipient,
+      false,
+      TOKEN_2022_PROGRAM_ID,
     );
 
     const tx = new Transaction();
@@ -371,6 +384,7 @@ export async function buildTransferController(req, res) {
           recipientAta,
           recipient,
           AUTO_MINT_ADDRESS,
+          TOKEN_2022_PROGRAM_ID,
         ),
       );
     }
@@ -382,6 +396,8 @@ export async function buildTransferController(req, res) {
         recipientAta,
         sender,
         Math.floor(amountTokens * 1_000_000),
+        [],
+        TOKEN_2022_PROGRAM_ID,
       ),
     );
 
@@ -459,9 +475,21 @@ export async function buildClaimController(req, res) {
     const marketPda = new PublicKey(market.marketPda);
     const vaultPda = new PublicKey(market.vaultPda);
 
+    const onChainState = await solanaService.fetchMarketState(
+      marketPda.toBase58(),
+    );
+    if (!onChainState.lpWithdrawn) {
+      return res.status(400).json({
+        success: false,
+        error: "Please wait a moment. The market is finalizing payouts.",
+      });
+    }
+
     const userTokenAccount = getAssociatedTokenAddressSync(
       AUTO_MINT_ADDRESS,
       user,
+      false,
+      TOKEN_2022_PROGRAM_ID,
     );
 
     const [positionPda] = PublicKey.findProgramAddressSync(
@@ -476,8 +504,9 @@ export async function buildClaimController(req, res) {
         userPosition: positionPda,
         vault: vaultPda,
         userTokenAccount: userTokenAccount,
+        mint: AUTO_MINT_ADDRESS,
         user: user,
-        tokenProgram: TOKEN_PROGRAM_ID,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
       })
       .instruction();
 
@@ -567,6 +596,11 @@ export async function verifyClaimController(req, res) {
       });
     }
 
+    const onChainMarket = await solanaService.fetchMarketState(
+      market.marketPda,
+    );
+    const payoutRatio = onChainMarket.winnerPayoutRatio.toNumber();
+
     // 3. Fetch the pending predictions to calculate earnings
     const pendingPredictions = await prisma.prediction.findMany({
       where: {
@@ -587,7 +621,9 @@ export async function verifyClaimController(req, res) {
     // Calculate total earned: 1 winning share = 1 payout token
     const tokensEarned = pendingPredictions.reduce((sum, p) => {
       if (p.side === market.winningOutcome) {
-        return sum + Number(p.shareAmount);
+        const actualPayout =
+          (Number(p.shareAmount) * payoutRatio) / 1_000_000_000;
+        return sum + actualPayout;
       }
       return sum;
     }, 0);
@@ -647,6 +683,8 @@ export async function retrieveLpController(req, res) {
     const creatorTokenAccount = getAssociatedTokenAddressSync(
       AUTO_MINT_ADDRESS,
       crank.publicKey,
+      false,
+      TOKEN_2022_PROGRAM_ID,
     );
 
     const txSig = await solanaService.predMarket.methods
@@ -655,8 +693,9 @@ export async function retrieveLpController(req, res) {
         market: marketPda,
         vault: vaultPda,
         adminTokenAccount: creatorTokenAccount,
+        mint: AUTO_MINT_ADDRESS,
         authority: crank.publicKey,
-        tokenProgram: TOKEN_PROGRAM_ID,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
       })
       .signers([crank])
       .rpc();

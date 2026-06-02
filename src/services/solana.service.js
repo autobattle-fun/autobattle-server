@@ -11,6 +11,7 @@ import {
 } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountInstruction,
 } from "@solana/spl-token";
@@ -175,7 +176,29 @@ class SolanaService {
   // ── Persistent Infrastructure Helpers ───────────────────────────
 
   async _ensureAta(mint, owner) {
-    const ata = getAssociatedTokenAddressSync(mint, owner);
+    // Detect the token program that owns this mint
+    const mintInfo = await this.connection.getAccountInfo(mint);
+
+    // Fallback to legacy if null (though a valid mint shouldn't be null)
+    const mintTokenProgram = mintInfo?.owner ?? TOKEN_PROGRAM_ID;
+
+    // --- NEW EXPLICIT CHECK ---
+    const isToken2022 = mintTokenProgram.equals(TOKEN_2022_PROGRAM_ID);
+
+    if (isToken2022) {
+      logger.info("Token-2022 Mint detected", { mint: mint.toBase58() });
+    } else {
+      logger.info("Legacy SPL Token Mint detected", { mint: mint.toBase58() });
+    }
+    // --------------------------
+
+    const ata = getAssociatedTokenAddressSync(
+      mint,
+      owner,
+      false,
+      mintTokenProgram,
+    );
+
     const info = await this.connection.getAccountInfo(ata);
     if (!info) {
       const createAtaIx = createAssociatedTokenAccountInstruction(
@@ -183,12 +206,16 @@ class SolanaService {
         ata,
         owner,
         mint,
+        mintTokenProgram, // This correctly routes to 2022 or Legacy
       );
       await this.provider.sendAndConfirm(
         new anchor.web3.Transaction().add(createAtaIx),
         [this.crankKeypair],
       );
-      logger.info("Persistent ATA created", { ata: ata.toBase58() });
+      logger.info(
+        `Persistent ATA created (${isToken2022 ? "Token-2022" : "Legacy"})`,
+        { ata: ata.toBase58() },
+      );
     }
     return ata;
   }
@@ -210,6 +237,7 @@ class SolanaService {
     const requiredAddresses = [
       SystemProgram.programId,
       TOKEN_PROGRAM_ID,
+      TOKEN_2022_PROGRAM_ID,
       GAME_ENGINE_PROGRAM_ID,
       PRED_MARKET_PROGRAM_ID,
       this._sbQueue?.pubkey,
@@ -702,7 +730,7 @@ class SolanaService {
         autoMint: new PublicKey(env.AUTO_TOKEN_ADDRESS),
         creatorTokenAccount: creatorTokenAccount,
         authority: crank,
-        tokenProgram: TOKEN_PROGRAM_ID,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
         rent: new PublicKey("SysvarRent111111111111111111111111111111111"),
       })
@@ -737,8 +765,9 @@ class SolanaService {
         market: new PublicKey(marketPdaAddress),
         vault: new PublicKey(vaultPdaAddress),
         adminTokenAccount: adminTokenAccount,
+        mint: new PublicKey(env.AUTO_TOKEN_ADDRESS),
         authority: crank,
-        tokenProgram: TOKEN_PROGRAM_ID,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
       })
       .signers([this.crankKeypair])
       .rpc();
@@ -769,8 +798,9 @@ class SolanaService {
         market: new PublicKey(marketPdaAddress),
         vault: new PublicKey(vaultPdaAddress),
         adminTokenAccount,
+        mint: new PublicKey(env.AUTO_TOKEN_ADDRESS),
         authority: this.crankKeypair.publicKey,
-        tokenProgram: TOKEN_PROGRAM_ID,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       })
       .signers([this.crankKeypair])
