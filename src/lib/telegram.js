@@ -111,7 +111,7 @@ export async function notifyEvent(eventType, data, matchId) {
   // Format event-specific data
   switch (eventType) {
     case "match:created": {
-      const g = data.game || data;
+      const g = data.gameState || data.game || data;
       message += `Game #${escapeHTML(g.gameId)}\n`;
       message += `🔴 ${escapeHTML(g.red?.name || "Red")} (${escapeHTML(g.red?.llm || g.llmRed)})\n`;
       message += `🔵 ${escapeHTML(g.blue?.name || "Blue")} (${escapeHTML(g.blue?.llm || g.llmBlue)})`;
@@ -121,6 +121,36 @@ export async function notifyEvent(eventType, data, matchId) {
     case "round:started":
       message += `Round ${data.roundNumber}`;
       break;
+
+    case "cards:dealt": {
+      const g = data.gameState;
+      if (g) {
+        const redCardsStr = (g.red?.cards || []).map(c => c.label).join(", ");
+        const blueCardsStr = (g.blue?.cards || []).map(c => c.label).join(", ");
+        message += `🔴 ${escapeHTML(g.red?.name || "Red")}: <b>${escapeHTML(redCardsStr)}</b>\n`;
+        message += `🔵 ${escapeHTML(g.blue?.name || "Blue")}: <b>${escapeHTML(blueCardsStr)}</b>`;
+      } else {
+        message += formatDataCompact(data);
+      }
+      break;
+    }
+
+    case "river:flowing": {
+      const g = data.gameState;
+      if (g) {
+        const redCards = g.red?.cards || [];
+        const blueCards = g.blue?.cards || [];
+        const redRiver = redCards[redCards.length - 1];
+        const blueRiver = blueCards[blueCards.length - 1];
+        const redRiverStr = redRiver ? redRiver.label : "None";
+        const blueRiverStr = blueRiver ? blueRiver.label : "None";
+        message += `🔴 ${escapeHTML(g.red?.name || "Red")} River: <b>${escapeHTML(redRiverStr)}</b>\n`;
+        message += `🔵 ${escapeHTML(g.blue?.name || "Blue")} River: <b>${escapeHTML(blueRiverStr)}</b>`;
+      } else {
+        message += formatDataCompact(data);
+      }
+      break;
+    }
 
     case "agent:decision":
       if (data.playerStatus) {
