@@ -141,7 +141,14 @@ class SolanaService {
       try {
         await this._ensureSwitchboard();
         if (env.AUTO_TOKEN_ADDRESS) {
-          await this._getCrankAta();
+          try {
+            await this._getCrankAta();
+          } catch (ataErr) {
+            logger.warn(
+              "Crank ATA not ready (wallet may need SOL). Will retry on first use.",
+              { error: ataErr.message },
+            );
+          }
         }
         await this._ensureLookupTable();
 
@@ -294,19 +301,13 @@ class SolanaService {
   async _ensureSwitchboard() {
     if (this._sbProgram) return;
 
-    const sbProgramId = new PublicKey(env.SWITCHBOARD_PROGRAM_ID);
-    const sbIdl = await anchor.Program.fetchIdl(sbProgramId, this.provider);
-
-    if (!sbIdl) {
-      throw new Error(
-        `Failed to fetch Switchboard IDL for ${sbProgramId.toBase58()}`,
-      );
-    }
-
-    this._sbProgram = new anchor.Program(sbIdl, this.provider);
+    this._sbProgram = await sb.AnchorUtils.loadProgramFromProvider(
+      this.provider,
+    );
     this._sbQueue = await sb.getDefaultQueue(this.connection.rpcEndpoint);
 
     logger.info("Switchboard initialized", {
+      programId: this._sbProgram.programId.toBase58(),
       queue: this._sbQueue.pubkey.toBase58(),
     });
   }
@@ -751,10 +752,12 @@ class SolanaService {
     await this.initialize();
 
     const marketInfo = await this.connection.getAccountInfo(
-      new PublicKey(marketPdaAddress)
+      new PublicKey(marketPdaAddress),
     );
     if (!marketInfo) {
-      logger.warn("Market account already closed or missing", { marketPdaAddress });
+      logger.warn("Market account already closed or missing", {
+        marketPdaAddress,
+      });
       return null;
     }
 
@@ -787,29 +790,34 @@ class SolanaService {
       return;
     }
     const MIN_BALANCE = 0.05 * anchor.web3.LAMPORTS_PER_SOL;
-    const TOP_UP_TO   = 0.1  * anchor.web3.LAMPORTS_PER_SOL;
+    const TOP_UP_TO = 0.1 * anchor.web3.LAMPORTS_PER_SOL;
 
     for (const [name, kp] of [
-      ["RED",  this.agentRedKeypair],
+      ["RED", this.agentRedKeypair],
       ["BLUE", this.agentBlueKeypair],
     ]) {
       try {
         const balance = await this.connection.getBalance(kp.publicKey);
         if (balance < MIN_BALANCE) {
           const topUp = TOP_UP_TO - balance;
-          const crankBalance = await this.connection.getBalance(this.crankKeypair.publicKey);
+          const crankBalance = await this.connection.getBalance(
+            this.crankKeypair.publicKey,
+          );
           const MIN_CRANK_BALANCE = 0.05 * anchor.web3.LAMPORTS_PER_SOL;
 
           if (crankBalance - topUp < MIN_CRANK_BALANCE) {
-            logger.warn(`Crank has insufficient balance to top up agent ${name}`, {
-              crankBalance: crankBalance / anchor.web3.LAMPORTS_PER_SOL,
-              requiredTopUp: topUp / anchor.web3.LAMPORTS_PER_SOL,
-            });
+            logger.warn(
+              `Crank has insufficient balance to top up agent ${name}`,
+              {
+                crankBalance: crankBalance / anchor.web3.LAMPORTS_PER_SOL,
+                requiredTopUp: topUp / anchor.web3.LAMPORTS_PER_SOL,
+              },
+            );
             await sendNotification(
               `⚠️ <b>Agent Rebalance Alert</b>\n\n` +
-              `Crank wallet has insufficient balance to top up agent ${name}.\n` +
-              `- Crank balance: <code>${(crankBalance / anchor.web3.LAMPORTS_PER_SOL).toFixed(6)}</code> SOL\n` +
-              `- Required top up: <code>${(topUp / anchor.web3.LAMPORTS_PER_SOL).toFixed(6)}</code> SOL`
+                `Crank wallet has insufficient balance to top up agent ${name}.\n` +
+                `- Crank balance: <code>${(crankBalance / anchor.web3.LAMPORTS_PER_SOL).toFixed(6)}</code> SOL\n` +
+                `- Required top up: <code>${(topUp / anchor.web3.LAMPORTS_PER_SOL).toFixed(6)}</code> SOL`,
             );
             continue;
           }
@@ -817,16 +825,18 @@ class SolanaService {
           const tx = new anchor.web3.Transaction().add(
             SystemProgram.transfer({
               fromPubkey: this.crankKeypair.publicKey,
-              toPubkey:   kp.publicKey,
-              lamports:   topUp,
-            })
+              toPubkey: kp.publicKey,
+              lamports: topUp,
+            }),
           );
-          
-          const signature = await this.provider.sendAndConfirm(tx, [this.crankKeypair]);
+
+          const signature = await this.provider.sendAndConfirm(tx, [
+            this.crankKeypair,
+          ]);
           const topUpSol = topUp / anchor.web3.LAMPORTS_PER_SOL;
           const newBalanceSol = TOP_UP_TO / anchor.web3.LAMPORTS_PER_SOL;
 
-          logger.info(`Topped up agent ${name}`, { 
+          logger.info(`Topped up agent ${name}`, {
             topUpSol,
             newBalance: newBalanceSol,
             signature,
@@ -834,10 +844,10 @@ class SolanaService {
 
           await sendNotification(
             `🤖 <b>Agent Rebalance</b>\n\n` +
-            `Successfully topped up agent ${name} from Crank:\n` +
-            `- <b>Top Up Amount:</b> <code>${topUpSol.toFixed(6)}</code> SOL\n` +
-            `- <b>New Agent Balance:</b> <code>${newBalanceSol.toFixed(6)}</code> SOL\n` +
-            `- <b>Tx Signature:</b> <code>${signature}</code>`
+              `Successfully topped up agent ${name} from Crank:\n` +
+              `- <b>Top Up Amount:</b> <code>${topUpSol.toFixed(6)}</code> SOL\n` +
+              `- <b>New Agent Balance:</b> <code>${newBalanceSol.toFixed(6)}</code> SOL\n` +
+              `- <b>Tx Signature:</b> <code>${signature}</code>`,
           );
         }
       } catch (err) {
@@ -846,13 +856,12 @@ class SolanaService {
         });
         await sendNotification(
           `❌ <b>Agent Rebalance Error</b>\n\n` +
-          `Failed to top up agent ${name}:\n` +
-          `<code>${err.message}</code>`
+            `Failed to top up agent ${name}:\n` +
+            `<code>${err.message}</code>`,
         );
       }
     }
   }
-
 
   // ── Internal Helpers & Mock Simulation ──────────────────────────
 
