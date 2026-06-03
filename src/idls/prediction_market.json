@@ -216,6 +216,37 @@
       ]
     },
     {
+      "name": "reclaim_expired_lp",
+      "discriminator": [36, 234, 164, 131, 193, 49, 202, 186],
+      "accounts": [
+        {
+          "name": "market",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "admin_token_account",
+          "writable": true
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "address": "HoJyHfkwmb9vSRpCiKS2XYQvgWNNGp2DZfk62coMJv26"
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "refund_expired",
       "discriminator": [118, 153, 164, 244, 40, 128, 242, 250],
       "accounts": [
@@ -580,6 +611,11 @@
       "code": 6021,
       "name": "SharesRemaining",
       "msg": "Position still has shares — sell first."
+    },
+    {
+      "code": 6022,
+      "name": "ResolutionDeadlinePassed",
+      "msg": "The resolution deadline for this market has passed."
     }
   ],
   "types": [

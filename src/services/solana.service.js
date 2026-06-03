@@ -814,6 +814,33 @@ class SolanaService {
     return txSig;
   }
 
+  async reclaimExpiredLp(marketPdaAddress, vaultPdaAddress) {
+    if (env.MOCK_SOLANA) return this._generateMockTx();
+    await this.initialize();
+
+    const crank = this.crankKeypair.publicKey;
+    const adminTokenAccount = await this._getCrankAta();
+
+    const txSig = await this.predMarket.methods
+      .reclaimExpiredLp()
+      .accounts({
+        market: new PublicKey(marketPdaAddress),
+        vault: new PublicKey(vaultPdaAddress),
+        adminTokenAccount: adminTokenAccount,
+        mint: new PublicKey(env.AUTO_TOKEN_ADDRESS),
+        authority: crank,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
+      })
+      .signers([this.crankKeypair])
+      .rpc();
+
+    logger.info("Expired LP safely reclaimed from dead market", {
+      marketPdaAddress,
+      txSig,
+    });
+    return txSig;
+  }
+
   async rebalanceAgentWallets() {
     if (env.MOCK_SOLANA) {
       logger.info("Mock Solana enabled, skipping agent wallet rebalance");
