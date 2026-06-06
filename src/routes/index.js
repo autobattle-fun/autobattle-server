@@ -7,6 +7,8 @@ import { marketRoutes } from "./market.routes.js";
 import { tradeRoutes } from "./trade.routes.js";
 import { commentRoutes } from "./comment.routes.js";
 import { openfortRoutes } from "./openfort.routes.js";
+import { leaderboardRoutes } from "./leaderboard.routes.js";
+import { bountyRoutes } from "./bounty.routes.js";
 
 export const apiRoutes = Router();
 
@@ -18,3 +20,5 @@ apiRoutes.use("/markets", marketRoutes);
 apiRoutes.use("/trades", tradeRoutes);
 apiRoutes.use("/comments", commentRoutes);
 apiRoutes.use("/openfort", openfortRoutes);
+apiRoutes.use("/leaderboard", leaderboardRoutes);
+apiRoutes.use("/bounties", bountyRoutes);

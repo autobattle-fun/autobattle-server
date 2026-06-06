@@ -206,6 +206,14 @@ export async function verifyTradeController(req, res) {
         where: { id: userRecord.id },
         data: { totalPredictions: { increment: 1 } },
       }),
+      prisma.tradeLog.create({
+        data: {
+          userId: userRecord.id,
+          marketId: market.id,
+          side: side.toUpperCase(),
+          amount: amountTokens,
+        },
+      }),
     ]);
 
     return res.status(200).json({ success: true, data: syncedPrediction });

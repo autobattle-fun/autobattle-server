@@ -9,6 +9,7 @@ import { initWebSocket } from "./lib/websocket.js";
 import { startPriceStream, stopPriceStream } from "./lib/price-stream.js";
 import { startTelegramBot, stopTelegramBot } from "./lib/telegram.js";
 import { startSweepCron, stopSweepCron } from "./lib/sweep-cron.js";
+import { startLeaderboardCron, stopLeaderboardCron } from "./lib/leaderboard-cron.js";
 import { solanaService } from "./services/solana.service.js";
 
 async function start(workerId) {
@@ -50,6 +51,7 @@ async function start(workerId) {
       startPriceStream();
       startTelegramBot();
       startSweepCron();
+      startLeaderboardCron();
     }
     await solanaService.initialize();
   });
@@ -58,6 +60,7 @@ async function start(workerId) {
     logger.info("Shutting down API server", { workerId });
     stopCrankEngine();
     stopSweepCron();
+    stopLeaderboardCron();
     await stopPriceStream();
     stopTelegramBot();
     server.close(async () => {
